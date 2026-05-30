@@ -6,9 +6,201 @@ import os
 import sys
 import pyudev
 import shutil
+import tempfile
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+import time
+from typing import List, Optional
+import shlex
+import threading
+import uuid
+from fastapi.responses import StreamingResponse
 
 
+def get_mountpoint(device):
+    """Return mountpoint for a device (e.g. /dev/sdb1) if mounted, else None.
+
+    Parses /proc/mounts to find the mountpoint for the given device node.
+    """
+    try:
+        with open('/proc/mounts', 'r') as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) >= 2 and parts[0] == device:
+                    return parts[1]
+    except Exception:
+        pass
+    return None
+
+
+class CopyRequest(BaseModel):
+    src: str
+    dst: str
+    excludes: Optional[List[str]] = None
+
+
+def start_copy_in_background(src, dst, excludes=None):
+    """Start a copy from src to dst in the background.
+
+    Behaviour:
+      - If src and dst are directories, use rsync with optional excludes.
+      - If src and dst are block devices (/dev/...), mount them temporarily (src ro),
+        rsync the files (like copy/paste) and unmount/cleanup after completion.
+      - Otherwise fall back to raw dd only when neither of the above apply.
+
+    Returns:
+      dict: {'pid': <int>, 'logfile': <path>} on success or {'error': msg} on failure.
+    """
+    rsync = shutil.which('rsync')
+    dd = shutil.which('dd')
+
+    # helper to build exclude args
+    def _exclude_args(excludes_list):
+        args = []
+        if not excludes_list:
+            return args
+        for ex in excludes_list:
+            args += ['--exclude', ex]
+        return args
+
+    # 1) filesystem directories -> rsync directly
+    if os.path.isdir(src) and os.path.isdir(dst):
+        if not rsync:
+            return {'error': 'rsync not found on system'}
+        logfile = f"/tmp/sanddisk_rsync_{os.getpid()}_{int(time.time())}.log"
+        # use copy/paste semantics: recursive, preserve times and symlinks, but not owner/group/perms
+        cmd = [rsync, '-r', '-t', '--links', '--info=progress2'] + _exclude_args(excludes) + [src.rstrip('/') + '/', dst.rstrip('/') + '/']
+        if os.geteuid() != 0:
+            cmd = ['sudo'] + cmd
+        try:
+            logf = open(logfile, 'wb')
+            proc = subprocess.Popen(cmd, stdout=logf, stderr=subprocess.STDOUT)
+            return {'pid': proc.pid, 'logfile': logfile}
+        except Exception as e:
+            return {'error': str(e)}
+
+    # 2) block device nodes -> mount temporary and rsync files (copy/paste semantics)
+    if src.startswith('/dev/') and dst.startswith('/dev/'):
+        if not rsync:
+            return {'error': 'rsync not found on system'}
+        if not os.path.exists(src):
+            return {'error': f'source device not found: {src}'}
+        if not os.path.exists(dst):
+            return {'error': f'destination device not found: {dst}'}
+        if src == dst:
+            return {'error': 'source and destination are the same'}
+
+        # check for existing mounts and reuse them when possible
+        src_mp = get_mountpoint(src)
+        dst_mp = get_mountpoint(dst)
+        src_temp = False
+        dst_temp = False
+        try:
+            if not src_mp:
+                src_mp = tempfile.mkdtemp(prefix='sanddisk_src_')
+                mount_src_cmd = ['mount', '-o', 'ro', src, src_mp]
+                if os.geteuid() != 0:
+                    mount_src_cmd = ['sudo'] + mount_src_cmd
+                subprocess.run(mount_src_cmd, check=True)
+                src_temp = True
+            if not dst_mp:
+                dst_mp = tempfile.mkdtemp(prefix='sanddisk_dst_')
+                mount_dst_cmd = ['mount', dst, dst_mp]
+                if os.geteuid() != 0:
+                    mount_dst_cmd = ['sudo'] + mount_dst_cmd
+                subprocess.run(mount_dst_cmd, check=True)
+        except subprocess.CalledProcessError as e:
+            # cleanup any created dirs if mount failed
+            try:
+                if src_temp and os.path.ismount(src_mp):
+                    subprocess.run(['sudo','umount', src_mp])
+            except Exception:
+                pass
+            try:
+                if dst_temp and os.path.ismount(dst_mp):
+                    subprocess.run(['sudo','umount', dst_mp])
+            except Exception:
+                pass
+            try:
+                if src_temp:
+                    os.rmdir(src_mp)
+            except Exception:
+                pass
+            try:
+                if dst_temp:
+                    os.rmdir(dst_mp)
+            except Exception:
+                pass
+            return {'error': f'mount failed: {e}'}
+
+        # run rsync in a shell that unmounts and removes only temp mountpoints after completion
+        logfile = f"/tmp/sanddisk_rsync_{os.getpid()}_{int(time.time())}.log"
+        excl = _exclude_args(excludes)
+        # build rsync args safely
+        # use copy/paste semantics: recursive, preserve times and symlinks, but not owner/group/perms
+        rsync_args = ' '.join([shlex.quote(a) for a in ([rsync, '-r', '-t', '--links', '--info=progress2'] + excl + [src_mp.rstrip('/') + '/', dst_mp.rstrip('/') + '/'])])
+        # cleanup commands: only unmount/rmdir if we created the mountpoints
+        umount_src = (('sudo umount ' + shlex.quote(src_mp)) if os.geteuid() != 0 else ('umount ' + shlex.quote(src_mp))) if src_temp else ''
+        umount_dst = (('sudo umount ' + shlex.quote(dst_mp)) if os.geteuid() != 0 else ('umount ' + shlex.quote(dst_mp))) if dst_temp else ''
+        rmdir_src = ('rmdir ' + shlex.quote(src_mp)) if src_temp else ''
+        rmdir_dst = ('rmdir ' + shlex.quote(dst_mp)) if dst_temp else ''
+         # full wrapper command
+        cleanup_cmds = ' ; '.join(c for c in [umount_src, umount_dst, rmdir_src, rmdir_dst] if c)
+        if cleanup_cmds:
+            wrapper = f"bash -lc \"{rsync_args} ; rc=$?; {cleanup_cmds} >/dev/null 2>&1 || true; exit $rc\""
+        else:
+            wrapper = f"bash -lc \"{rsync_args}; exit $?\""
+        try:
+            logf = open(logfile, 'wb')
+            proc = subprocess.Popen(wrapper, shell=True, stdout=logf, stderr=subprocess.STDOUT)
+            return {'pid': proc.pid, 'logfile': logfile}
+        except Exception as e:
+            # attempt cleanup
+            try:
+                if src_temp and os.path.ismount(src_mp):
+                    subprocess.run(['sudo','umount', src_mp])
+            except Exception:
+                pass
+            try:
+                if dst_temp and os.path.ismount(dst_mp):
+                    subprocess.run(['sudo','umount', dst_mp])
+            except Exception:
+                pass
+            try:
+                if src_temp:
+                    os.rmdir(src_mp)
+            except Exception:
+                pass
+            try:
+                if dst_temp:
+                    os.rmdir(dst_mp)
+            except Exception:
+                pass
+            return {'error': str(e)}
+
+    # 3) fallback to dd for other cases
+    if not dd:
+        return {'error': 'dd not found on system'}
+    if not os.path.exists(src):
+        return {'error': f'source device not found: {src}'}
+    if not os.path.exists(dst):
+        return {'error': f'destination device not found: {dst}'}
+    if src == dst:
+        return {'error': 'source and destination are the same'}
+    if excludes:
+        return {'error': 'excludes supported only for filesystem (directory) copies'}
+
+    logfile = f"/tmp/sanddisk_copy_{os.getpid()}_{int(time.time())}.log"
+    cmd = [dd, f'if={src}', f'of={dst}', 'bs=4M', 'status=progress']
+    if os.geteuid() != 0:
+        cmd = ['sudo'] + cmd
+    try:
+        logf = open(logfile, 'wb')
+        proc = subprocess.Popen(cmd, stdout=logf, stderr=subprocess.STDOUT)
+        return {'pid': proc.pid, 'logfile': logfile}
+    except Exception as e:
+        return {'error': str(e)}
 
 
 def _human_size(num_bytes):
@@ -315,7 +507,7 @@ def format_drive(device_node, fs_type='ext4', label=None):
         return False
 
 
-def run_nwipe(device_node, method='ops2'):
+def run_nwipe(device_node, method='ops2', orig_fs=None, orig_label=None):
     """Run nwipe on the given device and stream its text output.
 
     Requires --nogui/--autonuke for parseable text output. Prints nwipe lines live
@@ -378,6 +570,11 @@ def run_nwipe(device_node, method='ops2'):
         ret = proc.wait()
         if ret == 0:
             print("Wipe finished.")
+            # After a destructive wipe the filesystem and label are gone — recreate them.
+            print(f"Restoring filesystem {orig_fs} and label {orig_label!s} on {device_node} ...")
+            ok = format_drive(device_node, fs_type=orig_fs, label=orig_label)
+            sys.exit(0 if ok else 1)
+
             return True
         else:
             print("Wipe failed, exit code", ret)
@@ -420,17 +617,22 @@ def localWipeLogic():
     orig_fs = chosen_part.get('fstype') or 'ext4'
     orig_label = chosen_part.get('label') or None
 
-    if not run_nwipe(chosen_part['node']):
+    if not run_nwipe(chosen_part['node'], orig_fs=orig_fs, orig_label=orig_label):
         print("Wipe failed or was cancelled. Exiting.")
         sys.exit(1)
 
-    # After a destructive wipe the filesystem and label are gone — recreate them.
-    print(f"Restoring filesystem {orig_fs} and label {orig_label!s} on {chosen_part['node']} ...")
-    ok = format_drive(chosen_part['node'], fs_type=orig_fs, label=orig_label)
-    sys.exit(0 if ok else 1)
+
 
 
 app = FastAPI()
+# Enable CORS for development/testing so the Test Site page can fetch the API
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.get("/drives")
 def read_drives():
@@ -438,6 +640,324 @@ def read_drives():
     Get a list of USB drives.
     """
     return get_usb_drives()
+
+@app.get("/drives_with_partitions")
+def read_drives_with_partitions():
+    """Return USB drives with their detected partitions.
+
+    Each drive dict will include a 'partitions' key containing a list of
+    partition dicts as returned by get_partitions().
+    """
+    drives = get_usb_drives()
+    for d in drives:
+        try:
+            d['partitions'] = get_partitions(d['node'])
+        except Exception:
+            d['partitions'] = []
+    return drives
+
+class Selection(BaseModel):
+    device: str
+
+
+@app.post("/select_partition")
+def select_partition(selection: Selection):
+    """Receive a selected partition/device from the web UI.
+
+    This endpoint currently echoes back the device node. It can be extended
+    to trigger formatting/wiping operations as needed.
+    """
+    # placeholder: simply return the received selection
+    return {"selected": selection.device}
+
+class CopyRequest(BaseModel):
+    src: str
+    dst: str
+    excludes: Optional[List[str]] = None
+
+
+def start_copy_in_background(src, dst, excludes=None):
+    """Start a copy from src to dst in the background.
+
+    Behaviour:
+      - If src and dst are directories, use rsync with optional excludes.
+      - If src and dst are block devices (/dev/...), mount them temporarily (src ro),
+        rsync the files (like copy/paste) and unmount/cleanup after completion.
+      - Otherwise fall back to raw dd only when neither of the above apply.
+
+    Returns:
+      dict: {'pid': <int>, 'logfile': <path>} on success or {'error': msg} on failure.
+    """
+    rsync = shutil.which('rsync')
+    dd = shutil.which('dd')
+
+    # helper to build exclude args
+    def _exclude_args(excludes_list):
+        args = []
+        if not excludes_list:
+            return args
+        for ex in excludes_list:
+            args += ['--exclude', ex]
+        return args
+
+    # 1) filesystem directories -> rsync directly
+    if os.path.isdir(src) and os.path.isdir(dst):
+        if not rsync:
+            return {'error': 'rsync not found on system'}
+        logfile = f"/tmp/sanddisk_rsync_{os.getpid()}_{int(time.time())}.log"
+        # use copy/paste semantics: recursive, preserve times and symlinks, but not owner/group/perms
+        cmd = [rsync, '-r', '-t', '--links', '--info=progress2'] + _exclude_args(excludes) + [src.rstrip('/') + '/', dst.rstrip('/') + '/']
+        if os.geteuid() != 0:
+            cmd = ['sudo'] + cmd
+        try:
+            logf = open(logfile, 'wb')
+            proc = subprocess.Popen(cmd, stdout=logf, stderr=subprocess.STDOUT)
+            return {'pid': proc.pid, 'logfile': logfile}
+        except Exception as e:
+            return {'error': str(e)}
+
+    # 2) block device nodes -> mount temporary and rsync files (copy/paste semantics)
+    if src.startswith('/dev/') and dst.startswith('/dev/'):
+        if not rsync:
+            return {'error': 'rsync not found on system'}
+        if not os.path.exists(src):
+            return {'error': f'source device not found: {src}'}
+        if not os.path.exists(dst):
+            return {'error': f'destination device not found: {dst}'}
+        if src == dst:
+            return {'error': 'source and destination are the same'}
+
+        # check for existing mounts and reuse them when possible
+        src_mp = get_mountpoint(src)
+        dst_mp = get_mountpoint(dst)
+        src_temp = False
+        dst_temp = False
+        try:
+            if not src_mp:
+                src_mp = tempfile.mkdtemp(prefix='sanddisk_src_')
+                mount_src_cmd = ['mount', '-o', 'ro', src, src_mp]
+                if os.geteuid() != 0:
+                    mount_src_cmd = ['sudo'] + mount_src_cmd
+                subprocess.run(mount_src_cmd, check=True)
+                src_temp = True
+            if not dst_mp:
+                dst_mp = tempfile.mkdtemp(prefix='sanddisk_dst_')
+                mount_dst_cmd = ['mount', dst, dst_mp]
+                if os.geteuid() != 0:
+                    mount_dst_cmd = ['sudo'] + mount_dst_cmd
+                subprocess.run(mount_dst_cmd, check=True)
+        except subprocess.CalledProcessError as e:
+            # cleanup any created dirs if mount failed
+            try:
+                if src_temp and os.path.ismount(src_mp):
+                    subprocess.run(['sudo','umount', src_mp])
+            except Exception:
+                pass
+            try:
+                if dst_temp and os.path.ismount(dst_mp):
+                    subprocess.run(['sudo','umount', dst_mp])
+            except Exception:
+                pass
+            try:
+                if src_temp:
+                    os.rmdir(src_mp)
+            except Exception:
+                pass
+            try:
+                if dst_temp:
+                    os.rmdir(dst_mp)
+            except Exception:
+                pass
+            return {'error': f'mount failed: {e}'}
+
+        # run rsync in a shell that unmounts and removes only temp mountpoints after completion
+        logfile = f"/tmp/sanddisk_rsync_{os.getpid()}_{int(time.time())}.log"
+        excl = _exclude_args(excludes)
+        # build rsync args safely
+        # use copy/paste semantics: recursive, preserve times and symlinks, but not owner/group/perms
+        rsync_args = ' '.join([shlex.quote(a) for a in ([rsync, '-r', '-t', '--links', '--info=progress2'] + excl + [src_mp.rstrip('/') + '/', dst_mp.rstrip('/') + '/'])])
+        # cleanup commands: only unmount/rmdir if we created the mountpoints
+        umount_src = (('sudo umount ' + shlex.quote(src_mp)) if os.geteuid() != 0 else ('umount ' + shlex.quote(src_mp))) if src_temp else ''
+        umount_dst = (('sudo umount ' + shlex.quote(dst_mp)) if os.geteuid() != 0 else ('umount ' + shlex.quote(dst_mp))) if dst_temp else ''
+        rmdir_src = ('rmdir ' + shlex.quote(src_mp)) if src_temp else ''
+        rmdir_dst = ('rmdir ' + shlex.quote(dst_mp)) if dst_temp else ''
+         # full wrapper command
+        cleanup_cmds = ' ; '.join(c for c in [umount_src, umount_dst, rmdir_src, rmdir_dst] if c)
+        if cleanup_cmds:
+            wrapper = f"bash -lc \"{rsync_args} ; rc=$?; {cleanup_cmds} >/dev/null 2>&1 || true; exit $rc\""
+        else:
+            wrapper = f"bash -lc \"{rsync_args}; exit $?\""
+        try:
+            logf = open(logfile, 'wb')
+            proc = subprocess.Popen(wrapper, shell=True, stdout=logf, stderr=subprocess.STDOUT)
+            return {'pid': proc.pid, 'logfile': logfile}
+        except Exception as e:
+            # attempt cleanup
+            try:
+                if src_temp and os.path.ismount(src_mp):
+                    subprocess.run(['sudo','umount', src_mp])
+            except Exception:
+                pass
+            try:
+                if dst_temp and os.path.ismount(dst_mp):
+                    subprocess.run(['sudo','umount', dst_mp])
+            except Exception:
+                pass
+            try:
+                if src_temp:
+                    os.rmdir(src_mp)
+            except Exception:
+                pass
+            try:
+                if dst_temp:
+                    os.rmdir(dst_mp)
+            except Exception:
+                pass
+            return {'error': str(e)}
+
+    # 3) fallback to dd for other cases
+    if not dd:
+        return {'error': 'dd not found on system'}
+    if not os.path.exists(src):
+        return {'error': f'source device not found: {src}'}
+    if not os.path.exists(dst):
+        return {'error': f'destination device not found: {dst}'}
+    if src == dst:
+        return {'error': 'source and destination are the same'}
+    if excludes:
+        return {'error': 'excludes supported only for filesystem (directory) copies'}
+
+    logfile = f"/tmp/sanddisk_copy_{os.getpid()}_{int(time.time())}.log"
+    cmd = [dd, f'if={src}', f'of={dst}', 'bs=4M', 'status=progress']
+    if os.geteuid() != 0:
+        cmd = ['sudo'] + cmd
+    try:
+        logf = open(logfile, 'wb')
+        proc = subprocess.Popen(cmd, stdout=logf, stderr=subprocess.STDOUT)
+        return {'pid': proc.pid, 'logfile': logfile}
+    except Exception as e:
+        return {'error': str(e)}
+
+
+# in-memory job store
+JOBS = {}
+
+
+def _tail_log(path, max_lines=50):
+    try:
+        with open(path, 'rb') as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            block = 1024
+            data = b''
+            while size > 0 and data.count(b'\n') <= max_lines:
+                if size - block > 0:
+                    f.seek(size - block)
+                    data = f.read() + data
+                else:
+                    f.seek(0)
+                    data = f.read() + data
+                size -= block
+            return data.decode(errors='ignore').splitlines()[-max_lines:]
+    except Exception:
+        return []
+
+
+def _monitor_job(job_id, proc, logfile):
+    job = JOBS.get(job_id)
+    if not job:
+        return
+    # stream logfile periodically by updating job['lines'] and final status
+    try:
+        while True:
+            ret = proc.poll()
+            job['lines'] = _tail_log(logfile, max_lines=100)
+            job['updated_at'] = time.time()
+            if ret is not None:
+                job['exitcode'] = ret
+                job['status'] = 'completed' if ret == 0 else 'failed'
+                job['lines'] = _tail_log(logfile, max_lines=200)
+                job['finished_at'] = time.time()
+                break
+            time.sleep(1)
+    except Exception as e:
+        job['status'] = 'error'
+        job['error'] = str(e)
+
+
+@app.get('/job/{job_id}')
+def get_job(job_id: str):
+    job = JOBS.get(job_id)
+    if not job:
+        return {'error': 'job not found'}
+    return job
+
+
+@app.get('/events/{job_id}')
+def events(request, job_id: str):
+    def event_generator():
+        if job_id not in JOBS:
+            yield f"data: {json.dumps({'error':'job not found'})}\n\n"
+            return
+        last_sent = None
+        while True:
+            job = JOBS.get(job_id)
+            if not job:
+                yield f"data: {json.dumps({'error':'job gone'})}\n\n"
+                return
+            payload = {
+                'status': job.get('status'),
+                'pid': job.get('pid'),
+                'logfile': job.get('logfile'),
+                'exitcode': job.get('exitcode'),
+                'lines': job.get('lines', [])
+            }
+            s = json.dumps(payload)
+            if s != last_sent:
+                yield f"data: {s}\n\n"
+                last_sent = s
+            if job.get('status') in ('completed', 'failed', 'error'):
+                return
+            # client disconnected?
+            if request.scope.get('client') is None:
+                return
+            time.sleep(1)
+    return StreamingResponse(event_generator(), media_type='text/event-stream')
+
+
+# modify copy_device to create job and monitor
+@app.post('/copy_device')
+def copy_device(req: CopyRequest):
+    res = start_copy_in_background(req.src, req.dst, req.excludes)
+
+    if isinstance(res, dict):
+        if res.get("error"):
+            return res
+
+        pid = res.get("pid")
+        logfile = res.get("logfile")
+
+        if pid is None or logfile is None:
+            return {"error": f"unexpected start_copy result: {res!r}"}
+
+        job_id = uuid.uuid4().hex
+
+        JOBS[job_id] = {
+            "id": job_id,
+            "status": "running",
+            "pid": pid,
+            "logfile": logfile,
+            "src": req.src,
+            "dst": req.dst,
+            "created_at": time.time(),
+            "updated_at": time.time(),
+            "lines": [],
+        }
+
+        # Cannot monitor with a process object because you don't have one
+        return {"job_id": job_id}
+
+    return {"error": f"unexpected start_copy result: {res!r}"}
 
 
 
