@@ -147,28 +147,35 @@
         startCopyBtn.addEventListener('click', async () => {
           const src = document.getElementById('srcSelect').value;
           const dst = document.getElementById('dstSelect').value;
-          if (!src || !dst) return showStatus('Select both source and destination');
-          showStatus(`Starting copy ${src} -> ${dst}`);
+
+          if (!src || !dst) {
+            return showStatus('Select both source and destination');
+          }
+
+          showStatus(`Copying ${src} -> ${dst}...`);
+
           try {
-            const res = await fetch(apiUrlInput.value.replace(/\/$/, '') + '/copy_device', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ src, dst }),
-            });
-            const data = await res.json();
-            console.log("copy response:", data);
-            if (data.error) {
-            showStatus('Copy error: ' + data.error);
+            const res = await fetch(
+              apiUrlInput.value.replace(/\/$/, '') + '/copy_device',
+              {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ src, dst }),
+              }
+            );
+
+            if (res.ok) {
+              showStatus('Copy complete');
             } else {
-            showStatus('Copy started: job=' + data.job_id);
+              showStatus(`Copy failed (HTTP ${res.status})`);
             }
+
           } catch (err) {
             showStatus('Copy request failed: ' + err.message);
           }
         });
       }
     }
-
     loadBtn.addEventListener('click', async () => {
       const base = apiUrlInput.value.trim();
       if (!base) return showStatus('Enter API base URL');
