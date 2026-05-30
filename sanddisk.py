@@ -529,15 +529,18 @@ def select_partition(selection: Selection):
 def copy_device(req: CopyRequest):
     logger.info(f"Starting copy from {req.src} to {req.dst}")
 
-    shutil.copytree(
-        find_media_name(req.src),
-        find_media_name(req.dst),
-        dirs_exist_ok=True,
-        ignore=shutil.ignore_patterns("System Volume Information")
-    )
-    pass
+    try:
+        shutil.copytree(
+            find_media_name(req.src),
+            find_media_name(req.dst),
+            dirs_exist_ok=True,
+            ignore=shutil.ignore_patterns("System Volume Information")
+        )
+    except Exception as e:
+        logger.error(f"Copy failed: {e}")
+        return {"status": "copy failed", "error": str(e)}
 
-
+    return {"status": "copy complete"}
 
 
 

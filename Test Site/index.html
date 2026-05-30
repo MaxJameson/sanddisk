@@ -140,9 +140,9 @@
           }
         });
       }
-
       // Start copy handler
       const startCopyBtn = document.getElementById('startCopyBtn');
+
       if (startCopyBtn) {
         startCopyBtn.addEventListener('click', async () => {
           const src = document.getElementById('srcSelect').value;
@@ -152,7 +152,8 @@
             return showStatus('Select both source and destination');
           }
 
-          showStatus(`Copying ${src} -> ${dst}...`);
+          startCopyBtn.disabled = true;
+          showStatus(`Copying ${src} -> ${dst}. Please wait...`);
 
           try {
             const res = await fetch(
@@ -164,14 +165,18 @@
               }
             );
 
+            const data = await res.json();
+
             if (res.ok) {
-              showStatus('Copy complete');
+              showStatus(data.status || 'Copy complete');
             } else {
-              showStatus(`Copy failed (HTTP ${res.status})`);
+              showStatus(data.error || `Copy failed (HTTP ${res.status})`);
             }
 
           } catch (err) {
             showStatus('Copy request failed: ' + err.message);
+          } finally {
+            startCopyBtn.disabled = false;
           }
         });
       }
