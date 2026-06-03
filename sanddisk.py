@@ -61,50 +61,57 @@ def _human_size(num_bytes):
         num_bytes /= 1024.0
     return f"{num_bytes:.2f} PB"
 
+def _is_usb_device(device):
+    current = device
+
+    while current is not None:
+        if current.subsystem == "usb":
+            return True
+
+        if current.properties.get("ID_BUS") == "usb":
+            return True
+
+        current = current.parent
+
+    return False
 
 def get_usb_drives():
-    """Discover USB block devices and return metadata for each.
-
-    Scans udev for block devices with DEVTYPE='disk' and ID_BUS='usb'.
-
-    Returns:
-        list[dict]: List of drive metadata dictionaries. Each dict contains keys:
-            - node (str): device node (e.g. '/dev/sdb')
-            - vendor (str|None)
-            - model (str|None)
-            - serial (str|None)
-            - size (int|None): size in bytes or None if unavailable
-            - size_human (str): human readable size or 'Unknown'
-
-    Raises:
-        RuntimeError: Only in rare cases if pyudev fails; most errors are handled
-        and missing fields set to None.
-    """
+    """Discover USB-connected block devices and return metadata."""
     context = pyudev.Context()
     drives = []
-    for device in context.list_devices(subsystem='block', DEVTYPE='disk'):
-        if device.get('ID_BUS') != 'usb':
+
+    for device in context.list_devices(subsystem="block", DEVTYPE="disk"):
+        if not device.device_node:
             continue
+
+        # Skip non-USB devices
+        if not _is_usb_device(device):
+            continue
+
         devnode = device.device_node
-        if not devnode:
-            continue
-        # try to read size from sysfs (size is in 512-byte sectors)
+
+        # Read size from sysfs (512-byte sectors)
         size_bytes = None
         try:
             base = os.path.basename(devnode)
-            with open(f"/sys/block/{base}/size", "r") as f:
+            with open(f"/sys/block/{base}/size") as f:
                 sectors = int(f.read().strip())
-                size_bytes = sectors * 512
+            size_bytes = sectors * 512
         except Exception:
-            size_bytes = None
+            pass
+
         drives.append({
-            'node': devnode,
-            'vendor': device.get('ID_VENDOR'),
-            'model': device.get('ID_MODEL'),
-            'serial': device.get('ID_SERIAL_SHORT') or device.get('ID_SERIAL'),
-            'size': size_bytes,
-            'size_human': _human_size(size_bytes) if size_bytes else 'Unknown',
+            "node": devnode,
+            "vendor": device.properties.get("ID_VENDOR"),
+            "model": device.properties.get("ID_MODEL"),
+            "serial": (
+                device.properties.get("ID_SERIAL_SHORT")
+                or device.properties.get("ID_SERIAL")
+            ),
+            "size": size_bytes,
+            "size_human": _human_size(size_bytes),
         })
+
     return drives
 
 
@@ -347,7 +354,7 @@ def format_drive(device_node, fs_type='ext4', label=None):
         return False
 
 
-def run_nwipe(device_node, method='ops2', orig_fs=None, orig_label=None):
+def run_nwipe(device_node, method='is5enh', orig_fs=None, orig_label=None):
     """Run nwipe on the given device and stream its text output.
 
     Requires --nogui/--autonuke for parseable text output. Prints nwipe lines live
@@ -542,5 +549,4 @@ def copy_device(req: CopyRequest):
 
     return {"status": "copy complete"}
 
-
-
+localWipeLogic()

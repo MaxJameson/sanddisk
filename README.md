@@ -1,13 +1,11 @@
 # sanddisk
-
-A small utility to inspect connected USB block devices, select a drive or partition, optionally securely wipe it with nwipe, and recreate a filesystem. It also exposes a simple FastAPI endpoint to list detected USB drives.
+A small utility to copy, scan and wipe drives
 
 ## Features
 - List USB drives and partitions (via pyudev)
 - Interactive selection of drive and partition
-- Optional secure wipe using nwipe (--method, --verify, --nogui)
-- Format the selected partition/device using the detected or chosen filesystem
-- FastAPI endpoint: GET /drives returns JSON list of detected USB drives
+- Secure wipe using nwipe (--method, --verify, --nogui)
+- FastAPI endpoint: for running above features
 
 ## Requirements
 - Python 3
@@ -26,14 +24,9 @@ pip3 install pyudev fastapi
 ```
 
 ## Usage
-- Run as a CLI tool:
-  python3 sanddisk.py
-  - Select a drive, then a partition (or use whole device if none)
-  - Optionally wipe with nwipe and then format (the script can restore the original filesystem/label)
-
 - Run the FastAPI endpoint (example with uvicorn):
-  uvicorn sanddisk:app --reload --host 0.0.0.0 --port 8000
-  GET http://localhost:8000/drives
+  sudo uvicorn sanddisk:app --reload --host 0.0.0.0 --port 8000
+  - Use POST requests to access relvant endpoints (example can be found in test folder)
 
 ## Notes and safety
 - Wiping and formatting are destructive operations. Always confirm the selected device before proceeding.
