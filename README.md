@@ -9,23 +9,25 @@ A small utility to copy, scan and wipe drives
 
 ## Requirements
 - Python 3
-- Python packages: pyudev, fastapi, clamd
-- Utilities (Ubuntu examples):
-  - nwipe (optional, for secure erase)
+- Python packages: pyudev, fastapi
+- Utilities:
+  - nwipe (for secure erase)
   - exfatprogs (file system support)
   - smartmontools (filesystem support)
   - uvicorn (to run the FastAPI app)
   - clam (av scan)
 
-## Ubuntu install (recommended)
+## Ubuntu/debian install
 ```bash
 sudo apt update
 sudo apt install python3 python3-pip exfatprogs nwipe smartmontools uvicorn
 sudo apt install clamav clamav-daemon
-pip3 install pyudev fastapi clamd
+pip3 install pyudev fastapi or sudo sudo apt install python3-pyudev python3-fastapi
 ```
 
 ## Usage
+- Ensure the clam service is running:
+  - sudo systemctl status clamav-daemon
 - Run the FastAPI endpoint (example with uvicorn):
   sudo uvicorn sanddisk:app --reload --host 0.0.0.0 --port 8000
   - Use POST requests to access relvant endpoints (example can be found in test folder)
