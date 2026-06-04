@@ -17,7 +17,194 @@ from threading import Thread
 import uuid
 from fastapi.responses import StreamingResponse
 import logging
+from enum import Enum
+import math
+from typing import Optional
+from pydantic import BaseModel
 
+
+class Device(BaseModel):
+    node: str
+    number: str
+    fstype: str | None = None
+    label: str | None = None
+    size: int
+    size_human: str
+
+class Selection(BaseModel):
+    device: Device
+
+class CopyRequest(BaseModel):
+    src: str
+    dst: str
+    excludes: Optional[List[str]] = None
+
+
+class jobStates(Enum):
+    WIPING = "WIPING"
+    IDLE = "IDLE"
+    COPYING = "COPYING"
+    SCANNING = "SCANNING"
+    FORMATTING = "FORMATTING"
+
+class apiManager:
+    def __init__(self):
+        self.activityMessage = jobStates.IDLE.value
+        self.status = jobStates.IDLE
+
+global apiObj 
+apiObj = apiManager()
+
+def av_scan(device_node):
+
+    mountPoint = get_mountpoint(device_node)
+    if not mountPoint:
+        print("Device is not mounted; cannot scan with ClamAV. Please mount the device and try again.")
+        return False
+    
+    if apiObj.status != jobStates.IDLE:
+        print("Another job is currently running. Please wait until it finishes.")
+        return False
+    else:
+        apiObj.status = jobStates.SCANNING
+        apiObj.activityMessage = f"Scanning {device_node} for viruses..."
+
+    cmd = ['clamscan', f'-r', mountPoint]
+    if os.geteuid() != 0:
+        cmd = ['sudo'] + cmd
+    print("Running:", ' '.join(cmd))
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            universal_newlines=True,
+        )
+        import re
+        last_pass = None
+        # Read lines as they arrive and print them; try to extract pass number
+        infected_files = 0
+        for raw in proc.stdout:
+            line = raw.rstrip('\r\n')
+            # Print raw nwipe output so user sees messages
+            if "infected files" in line.lower():
+                infected_files = int(line.split(":")[-1].strip())
+                print(f"Infected files found: {infected_files}")
+
+            low = line.lower()
+        ret = proc.wait()
+
+        if ret == 0:
+            print("Scan completed successfully with no infections found.")
+            apiObj.status = jobStates.IDLE
+            apiObj.activityMessage = "Scan complete: no infections found"
+            return True
+        if ret == 1:
+            print(f"Scan completed with infections found: {infected_files} infected files.")
+            apiObj.status = jobStates.IDLE
+            apiObj.activityMessage = f"Scan complete: {infected_files} infected files found"
+            return False
+        else:
+            print("Scan completed with non-zero exit code", ret)
+            apiObj.status = jobStates.IDLE
+            apiObj.activityMessage = "Scan completed with issues"
+            return False
+
+    except Exception as e:
+        print("Scan failed:", e)
+        apiObj.status = jobStates.IDLE
+        apiObj.activityMessage = "Scan failed"
+        return False
+
+
+def _entropy(data: bytes) -> float:
+    """Shannon entropy (0 = uniform, 8 = fully random for bytes)."""
+    if not data:
+        return 0.0
+
+    freq = [0] * 256
+    for b in data:
+        freq[b] += 1
+
+    ent = 0.0
+    length = len(data)
+
+    for count in freq:
+        if count:
+            p = count / length
+            ent -= p * math.log2(p)
+
+    return ent
+
+def audit_passed(result):
+    return (
+        result["filesystem_detected"] is None
+        and not result["has_nonzero_data"]
+        and all(e <= 0.5 for e in result["entropy_samples"])
+        and result["all_zero_start"]
+    )
+
+def audit_disk(device, sample_size=1024 * 1024, samples=5):
+    """
+    Audit a disk/partition:
+      - checks filesystem presence
+      - checks zeroed regions
+      - computes entropy across samples
+
+    Returns dict with results.
+    """
+
+    result = {
+        "device": device,
+        "filesystem_detected": None,
+        "has_nonzero_data": False,
+        "entropy_samples": [],
+        "all_zero_start": False,
+    }
+
+    # --- 1. filesystem detection (blkid) ---
+    try:
+        blkid_out = subprocess.check_output(
+            ["blkid", "-o", "value", "-s", "TYPE", device],
+            stderr=subprocess.DEVNULL,
+            text=True
+        ).strip()
+        result["filesystem_detected"] = blkid_out if blkid_out else None
+    except Exception:
+        result["filesystem_detected"] = None
+
+    # --- 2. open device ---
+    size = os.stat(device).st_size if os.path.exists(device) else None
+
+    with open(device, "rb") as f:
+
+        for i in range(samples):
+            if size:
+                offset = int((size / samples) * i)
+                f.seek(offset)
+
+            data = f.read(sample_size)
+
+            if not data:
+                continue
+
+            # --- zero check ---
+            if any(b != 0 for b in data):
+                result["has_nonzero_data"] = True
+
+            # --- entropy ---
+            ent = _entropy(data)
+            result["entropy_samples"].append(ent)
+
+            # --- first sample zero check ---
+            if i == 0:
+                result["all_zero_start"] = all(b == 0 for b in data)
+
+        
+
+    return result,audit_passed(result)
 
 def get_mountpoint(device):
     """Return mountpoint for a device (e.g. /dev/sdb1) if mounted, else None.
@@ -33,13 +220,6 @@ def get_mountpoint(device):
     except Exception:
         pass
     return None
-
-
-class CopyRequest(BaseModel):
-    src: str
-    dst: str
-    excludes: Optional[List[str]] = None
-
 
 
 
@@ -330,14 +510,25 @@ def unmount_devices_for(node):
     return True
 
 
-def format_drive(device_node, fs_type='ext4', label=None):
+def format_drive(device_node, fs_type='ext4', label=None, apiCheck=True):
     """Format the given device node with the chosen filesystem.
 
     Returns True on success, False otherwise.
     """
+    if apiCheck:
+        if apiObj.status != jobStates.IDLE:
+            print("Another job is currently running. Please wait until it finishes.")
+            return False
+        else:
+            apiObj.status = jobStates.FORMATTING
+
+    apiObj.activityMessage = f"Formatting {device_node} as {fs_type}..."
+
     # Check for mounted partitions/devices first
     if is_mounted(device_node):
         if not unmount_devices_for(device_node):
+            if apiCheck:
+                apiObj.status = jobStates.IDLE
             return False
 
     print(f"About to format {device_node} as {fs_type}.")
@@ -348,13 +539,27 @@ def format_drive(device_node, fs_type='ext4', label=None):
     try:
         subprocess.run(cmd, check=True)
         print("Formatting finished.")
+        if apiCheck:
+            apiObj.status = jobStates.IDLE
+        apiObj.activityMessage = "Formatting complete"
         return True
     except subprocess.CalledProcessError as e:
+        # need to log this
         print("Formatting failed:", e)
+        if apiCheck:
+            apiObj.status = jobStates.IDLE
+        apiObj.activityMessage = "Formatting failed"
         return False
 
 
 def run_nwipe(device_node, method='is5enh', orig_fs=None, orig_label=None):
+
+    if apiObj.status != jobStates.IDLE:
+        print("Another job is currently running. Please wait until it finishes.")
+        return False
+    
+    apiObj.status = jobStates.WIPING
+    apiObj.activityMessage = "Starting wipe..."
     """Run nwipe on the given device and stream its text output.
 
     Requires --nogui/--autonuke for parseable text output. Prints nwipe lines live
@@ -362,13 +567,17 @@ def run_nwipe(device_node, method='is5enh', orig_fs=None, orig_label=None):
     """
     if is_mounted(device_node):
         if not unmount_devices_for(device_node):
+            apiObj.status = jobStates.IDLE
+            apiObj.activityMessage = "Wipe failed: unable to unmount device"
             return False
 
     nwipe = shutil.which('nwipe')
     if not nwipe:
-        print("nwipe not found. Install nwipe to use secure wipe (e.g. sudo apt install nwipe).")
+        apiObj.status = jobStates.IDLE
+        apiObj.activityMessage = "nwipe not found. Install nwipe to use secure wipe (e.g. sudo apt install nwipe)."
         return False
 
+    apiObj.activityMessage = "Wiping in progress..."
     cmd = [nwipe, f'--method={method}', '--verify=all', '--nogui', '--autonuke', device_node]
     if os.geteuid() != 0:
         cmd = ['sudo'] + cmd
@@ -389,16 +598,22 @@ def run_nwipe(device_node, method='is5enh', orig_fs=None, orig_label=None):
         for raw in proc.stdout:
             line = raw.rstrip('\r\n')
             # Print raw nwipe output so user sees messages
-            print(line)
 
             low = line.lower()
             # Detect final-random-pattern message and print a concise status
-            if 'writing final random pattern' in low:
-                print('NWipe: writing final random pattern (finalizing)...')
+            if 'blanking device' in low:
+                print(low)
+                apiObj.activityMessage = "Wiping in progress... (blanking device)"
                 continue
-            # Detect verification of final random pattern
-            if 'verifying final random pattern' in low or 'verifying final pattern' in low:
-                print('NWipe: verifying final random pattern...')
+
+            if 'verifying that' in low:
+                print(low)
+                apiObj.activityMessage = "Wiping in progress... (verifying)"
+                continue
+
+            if 'waiting for wipe thread to cancel for' in low:
+                print(low)
+                apiObj.activityMessage = "Wiping complete, finishing up..."
                 continue
 
             # Try to parse "pass" number from common nwipe text lines
@@ -411,23 +626,42 @@ def run_nwipe(device_node, method='is5enh', orig_fs=None, orig_label=None):
                     p = int(m.group(1))
                     if p != last_pass:
                         last_pass = p
+                        apiObj.activityMessage = f"Wiping in progress... (pass {p})"
                         print(f"NWipe: currently on pass {p}")
                 except Exception:
                     pass
         ret = proc.wait()
+
         if ret == 0:
-            print("Wipe finished.")
+            apiObj.activityMessage = "Wipe finished. Auditing device..."
+            audit_result,audit_passed = audit_disk(device_node)
+
+            # log this to a file somewhere
+            print("Audit result after wipe:", json.dumps(audit_result, indent=2))
+
+            if audit_passed:
+                apiObj.activityMessage = "Wipe successful"
+            else:
+                apiObj.activityMessage = "Wipe completed but audit failed"
             # After a destructive wipe the filesystem and label are gone — recreate them.
             print(f"Restoring filesystem {orig_fs} and label {orig_label!s} on {device_node} ...")
-            ok = format_drive(device_node, fs_type=orig_fs, label=orig_label)
-            sys.exit(0 if ok else 1)
-
-            return True
+            ok = format_drive(device_node, fs_type=orig_fs, label=orig_label,apiCheck=False)
+            if not ok:
+                print("Failed to restore filesystem/label after wipe.")
+                return False
+            apiObj.status = jobStates.IDLE
+            return audit_passed
         else:
+            apiObj.activityMessage = "Wipe failed"
+            # need to log this
             print("Wipe failed, exit code", ret)
+            apiObj.status = jobStates.IDLE
             return False
     except Exception as e:
+        apiObj.activityMessage = "Wipe failed"
+        # need to log this
         print("Wipe failed:", e)
+        apiObj.status = jobStates.IDLE
         return False
 
 
@@ -515,8 +749,6 @@ def read_drives_with_partitions():
             d['partitions'] = []
     return drives
 
-class Selection(BaseModel):
-    device: str
 
 
 @app.post("/select_partition")
@@ -529,14 +761,44 @@ def select_partition(selection: Selection):
     # placeholder: simply return the received selection
     return {"selected": selection.device}
 
+@app.post("/wipe_device")
+def wipe_device(selection: Selection):
+    device = selection.device
 
+    orig_fs = device.fstype or "ext4"
+    orig_label = device.label
+
+    logger.info(f"Received request to wipe device: {device.node}")
+
+    if not run_nwipe(
+        device.node,
+        orig_fs=orig_fs,
+        orig_label=orig_label
+    ):
+        return {"status": "wipe failed to start"}
+
+    return {"status": "wipe started"}
+
+@app.post("/scan_device")
+def scan_device(selection: Selection):
+    device = selection.device
+
+    logger.info(f"Received request to scan device: {device.node}")
+
+    if not av_scan(device.node):
+        return {"status": "scan failed or infections found"}
+    return {"status": "scan complete, no infections found"}
 
 # modify copy_device to create job and monitor
 @app.post('/copy_device')
 def copy_device(req: CopyRequest):
+    if apiObj.status != jobStates.IDLE:
+        return {"status": "error", "message": "Another job is currently running. Please wait until it finishes."}
+    apiObj.status = jobStates.COPYING
     logger.info(f"Starting copy from {req.src} to {req.dst}")
 
     try:
+        apiObj.activityMessage = "Copy in progress..."
         shutil.copytree(
             find_media_name(req.src),
             find_media_name(req.dst),
@@ -544,9 +806,15 @@ def copy_device(req: CopyRequest):
             ignore=shutil.ignore_patterns("System Volume Information")
         )
     except Exception as e:
+        apiObj.activityMessage = "Copy failed..."
+        # need to log this properly
         logger.error(f"Copy failed: {e}")
+        apiObj.status = jobStates.IDLE
         return {"status": "copy failed", "error": str(e)}
-
+    apiObj.status = jobStates.IDLE
+    apiObj.activityMessage = "Copy complete"
     return {"status": "copy complete"}
 
-localWipeLogic()
+@app.get('/status')
+def get_status():
+    return {"status": apiObj.status.value, "activityMessage": apiObj.activityMessage}   
