@@ -22,6 +22,7 @@ import math
 from typing import Optional
 from pydantic import BaseModel
 
+DRIVE_PATH = os.getenv("DRIVE_PATH") # Default path if not set
 
 class Device(BaseModel):
     node: str
@@ -35,9 +36,8 @@ class Selection(BaseModel):
     device: Device
 
 class CopyRequest(BaseModel):
-    src: str
-    dst: str
-    excludes: Optional[List[str]] = None
+    src_folder: str
+    dst_folder: str
 
 
 class jobStates(Enum):
@@ -714,6 +714,8 @@ def find_media_name(drive):
 
 
 app = FastAPI()
+
+
 # Enable CORS for development/testing so the Test Site page can fetch the API
 app.add_middleware(
     CORSMiddleware,
@@ -790,31 +792,66 @@ def scan_device(selection: Selection):
     return {"status": "scan complete, no infections found"}
 
 # modify copy_device to create job and monitor
-@app.post('/copy_device')
+@app.post("/copy_device")
 def copy_device(req: CopyRequest):
-    if apiObj.status != jobStates.IDLE:
-        return {"status": "error", "message": "Another job is currently running. Please wait until it finishes."}
-    apiObj.status = jobStates.COPYING
-    logger.info(f"Starting copy from {req.src} to {req.dst}")
+
+    src_path = os.path.join(DRIVE_PATH, req.src_folder)
+    dst_path = os.path.join(DRIVE_PATH, req.dst_folder)
+
+    if not os.path.isdir(src_path):
+        return {"status": "error", "message": "Source folder not found"}
+
+    if not os.path.isdir(dst_path):
+        return {"status": "error", "message": "Destination folder not found"}
 
     try:
+        apiObj.status = jobStates.COPYING
         apiObj.activityMessage = "Copy in progress..."
-        shutil.copytree(
-            find_media_name(req.src),
-            find_media_name(req.dst),
-            dirs_exist_ok=True,
-            ignore=shutil.ignore_patterns("System Volume Information")
-        )
-    except Exception as e:
-        apiObj.activityMessage = "Copy failed..."
-        # need to log this properly
-        logger.error(f"Copy failed: {e}")
+
+        for item in os.listdir(src_path):
+
+            source = os.path.join(src_path, item)
+            dest = os.path.join(dst_path, item)
+
+            if os.path.isdir(source):
+                shutil.copytree(
+                    source,
+                    dest,
+                    dirs_exist_ok=True
+                )
+            else:
+                shutil.copy2(
+                    source,
+                    dest
+                )
+
+        apiObj.activityMessage = "Copy complete"
         apiObj.status = jobStates.IDLE
-        return {"status": "copy failed", "error": str(e)}
-    apiObj.status = jobStates.IDLE
-    apiObj.activityMessage = "Copy complete"
-    return {"status": "copy complete"}
+
+        return {"status": "copy complete"}
+
+    except Exception as e:
+        apiObj.status = jobStates.IDLE
+        apiObj.activityMessage = "Copy failed"
+
+        return {
+            "status": "copy failed",
+            "error": str(e)
+        }
 
 @app.get('/status')
 def get_status():
     return {"status": apiObj.status.value, "activityMessage": apiObj.activityMessage}   
+
+@app.get("/folders")
+def get_folders():
+    folders = []
+    logger.info(f"Looking for folders in {DRIVE_PATH}")
+    for item in os.listdir(DRIVE_PATH):
+        full_path = os.path.join(DRIVE_PATH, item)
+
+        if os.path.isdir(full_path):
+            folders.append(item)
+
+    return folders
+
