@@ -60,6 +60,11 @@ class apiManager:
 global apiObj 
 apiObj = apiManager()
 
+global previousStatus
+previousStatus = None
+global previousMessage
+previousMessage = None
+
 def av_scan_parition(device_node):
 
     mountPoint = get_mountpoint(device_node)
@@ -561,18 +566,19 @@ def unmount_devices_for(node):
     mounts = get_mounted_devices()
     to_unmount = [m for m in mounts if m == node or m.startswith(node)]
     if not to_unmount:
+        logger.info("No unmount required")
         return True
-    logger.info("Mounted devices found:", ', '.join(to_unmount))
+    logger.info("Device mounted, unmounting")
     for m in to_unmount:
         cmd = ['umount', m]
         if os.geteuid() != 0:
             cmd = ['sudo'] + cmd
-        logger.info("Running:", ' '.join(cmd))
         try:
             subprocess.run(cmd, check=True)
         except subprocess.CalledProcessError as e:
-            logger.error("Failed to unmount", m, ":", e)
+            logger.error("Failed to unmount")
             return False
+    logger.info("Unount successfull")
     return True
 
 
@@ -601,7 +607,7 @@ def format_drive(device_node, fs_type='ext4', label=None, apiCheck=True):
     cmd = _mkfs_command_for(fs_type, device_node, label)
     if os.geteuid() != 0:
         cmd = ['sudo'] + cmd
-    logger.info("Running:", ' '.join(cmd))
+    logger.info("Running: format")
     try:
         subprocess.run(cmd, check=True)
         logger.info("Formatting finished.")
@@ -650,7 +656,7 @@ def run_nwipe(device_node, method='is5enh', orig_fs=None, orig_label=None):
     if os.geteuid() != 0:
         cmd = ['sudo'] + cmd
 
-    logger.info("Running:", ' '.join(cmd))
+    logger.info("Running: wipe")
     try:
         proc = subprocess.Popen(
             cmd,
@@ -938,10 +944,18 @@ def copy_device(req: CopyRequest):
             "status": "copy failed",
             "error": str(e)
         }
+    
 
 @app.get('/status')
 def get_status():
-    logger.info(f"Status requested: {apiObj.status.value}, message: {apiObj.activityMessage}")
+    global previousStatus
+    global previousMessage
+
+    if  apiObj.status.value != previousStatus or previousMessage != apiObj.activityMessage:
+        logger.info(f"Status changed: {apiObj.status.value}, message: {apiObj.activityMessage}")
+        previousStatus = apiObj.status.value
+        previousMessage = apiObj.activityMessage
+
     return {"status": apiObj.status.value, "activityMessage": apiObj.activityMessage}   
 
 @app.get("/folders")
