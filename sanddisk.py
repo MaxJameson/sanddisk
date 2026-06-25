@@ -39,6 +39,9 @@ class CopyRequest(BaseModel):
     src_folder: str
     dst_folder: str
 
+class scanRequest(BaseModel):
+    folder: str
+
 
 class jobStates(Enum):
     WIPING = "WIPING"
@@ -55,15 +58,15 @@ class apiManager:
 global apiObj 
 apiObj = apiManager()
 
-def av_scan(device_node):
+def av_scan_parition(device_node):
 
     mountPoint = get_mountpoint(device_node)
     if not mountPoint:
-        print("Device is not mounted; cannot scan with ClamAV. Please mount the device and try again.")
+        logger.error("Device is not mounted; cannot scan with ClamAV. Please mount the device and try again.")
         return False
     
     if apiObj.status != jobStates.IDLE:
-        print("Another job is currently running. Please wait until it finishes.")
+        logger.error("Another job is currently running. Please wait until it finishes.")
         return False
     else:
         apiObj.status = jobStates.SCANNING
@@ -72,7 +75,7 @@ def av_scan(device_node):
     cmd = ['clamscan', f'-r', mountPoint]
     if os.geteuid() != 0:
         cmd = ['sudo'] + cmd
-    print("Running:", ' '.join(cmd))
+    logger.info("Running: %s", ' '.join(cmd))
     try:
         proc = subprocess.Popen(
             cmd,
@@ -91,29 +94,88 @@ def av_scan(device_node):
             # Print raw nwipe output so user sees messages
             if "infected files" in line.lower():
                 infected_files = int(line.split(":")[-1].strip())
-                print(f"Infected files found: {infected_files}")
+                logger.info(f"Infected files found: {infected_files}")
 
             low = line.lower()
         ret = proc.wait()
 
         if ret == 0:
-            print("Scan completed successfully with no infections found.")
+            logger.info("Scan completed successfully with no infections found.")
             apiObj.status = jobStates.IDLE
             apiObj.activityMessage = "Scan complete: no infections found"
             return True
         if ret == 1:
-            print(f"Scan completed with infections found: {infected_files} infected files.")
+            logger.info(f"Scan completed with infections found: {infected_files} infected files.")
             apiObj.status = jobStates.IDLE
             apiObj.activityMessage = f"Scan complete: {infected_files} infected files found"
             return False
         else:
-            print("Scan completed with non-zero exit code", ret)
+            logger.error("Scan completed with non-zero exit code: %d", ret)
             apiObj.status = jobStates.IDLE
             apiObj.activityMessage = "Scan completed with issues"
             return False
 
     except Exception as e:
-        print("Scan failed:", e)
+        logger.error("Scan failed: %s", e)
+        apiObj.status = jobStates.IDLE
+        apiObj.activityMessage = "Scan failed"
+        return False
+
+def av_scan_folder(folder_path):
+
+    
+    if apiObj.status != jobStates.IDLE:
+        logger.error("Another job is currently running. Please wait until it finishes.")
+        return False
+    else:
+        apiObj.status = jobStates.SCANNING
+        apiObj.activityMessage = f"Scanning {folder_path} for viruses..."
+
+    cmd = ['clamscan', f'-r', folder_path]
+    if os.geteuid() != 0:
+        cmd = ['sudo'] + cmd
+    logger.info("Running: %s", ' '.join(cmd))
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            universal_newlines=True,
+        )
+        import re
+        last_pass = None
+        # Read lines as they arrive and print them; try to extract pass number
+        infected_files = 0
+        for raw in proc.stdout:
+            line = raw.rstrip('\r\n')
+            # Print raw nwipe output so user sees messages
+            if "infected files" in line.lower():
+                infected_files = int(line.split(":")[-1].strip())
+                logger.info(f"Infected files found: {infected_files}")
+
+            low = line.lower()
+        ret = proc.wait()
+
+        if ret == 0:
+            logger.info("Scan completed successfully with no infections found.")
+            apiObj.status = jobStates.IDLE
+            apiObj.activityMessage = "Scan complete: no infections found"
+            return True
+        if ret == 1:
+            logger.info(f"Scan completed with infections found: {infected_files} infected files.")
+            apiObj.status = jobStates.IDLE
+            apiObj.activityMessage = f"Scan complete: {infected_files} infected files found"
+            return False
+        else:
+            logger.error("Scan completed with non-zero exit code: %d", ret)
+            apiObj.status = jobStates.IDLE
+            apiObj.activityMessage = "Scan completed with issues"
+            return False
+
+    except Exception as e:
+        logger.error("Scan failed: %s", e)
         apiObj.status = jobStates.IDLE
         apiObj.activityMessage = "Scan failed"
         return False
@@ -155,6 +217,7 @@ def audit_disk(device, sample_size=1024 * 1024, samples=5):
 
     Returns dict with results.
     """
+    logger.info(f"Auditing device {device} with sample size {sample_size} and {samples} samples.")
 
     result = {
         "device": device,
@@ -202,7 +265,8 @@ def audit_disk(device, sample_size=1024 * 1024, samples=5):
             if i == 0:
                 result["all_zero_start"] = all(b == 0 for b in data)
 
-        
+    
+    logger.info(f"Audit result for {device}: {json.dumps(result, indent=2)}")
 
     return result,audit_passed(result)
 
@@ -308,11 +372,11 @@ def choose_drive(drives):
         Prints a numbered list and accepts a numeric choice; accepts 'q' to quit.
     """
     if not drives:
-        print("No USB drives found.")
+        logger.info("No USB drives found.")
         return None
-    print("Available USB drives:")
+    logger.info("Available USB drives:")
     for i, d in enumerate(drives, start=1):
-        print(f"{i}) {d['node']}  {d.get('vendor','')} {d.get('model','')}  Size: {d['size_human']}")
+        logger.info(f"{i}) {d['node']}  {d.get('vendor','')} {d.get('model','')}  Size: {d['size_human']}")
         # show partitions for this drive (if any)
         try:
             parts = get_partitions(d['node'])
@@ -322,19 +386,19 @@ def choose_drive(drives):
             for p in parts:
                 label = p.get('label') or ''
                 fstype = p.get('fstype') or ''
-                print(f"    - {label} {fstype}  Size: {p['size_human']}")
+                logger.info(f"    - {label} {fstype}  Size: {p['size_human']}")
 
     while True:
         choice = input(f"Select a drive [1-{len(drives)}] or 'q' to quit: ").strip()
         if choice.lower() in ('q', 'quit', 'exit'):
             return None
         if not choice.isdigit():
-            print("Please enter a number.")
+            logger.info("Please enter a number.")
             continue
         idx = int(choice) - 1
         if 0 <= idx < len(drives):
             return drives[idx]
-        print("Selection out of range.")
+        logger.info("Selection out of range.")
 
 
 def get_partitions(drive_node):
@@ -390,22 +454,22 @@ def choose_partition(parts):
         dict|None: Selected partition dict or None if user quits.
     """
     if not parts:
-        print("No partitions found on the selected drive.")
+        logger.info("No partitions found on the selected drive.")
         return None
-    print("Available partitions:")
+    logger.info("Available partitions:")
     for i, p in enumerate(parts, start=1):
-        print(f"{i}) {p.get('label','')} {p.get('fstype','')}  Size: {p['size_human']}")
+        logger.info(f"{i}) {p.get('label','')} {p.get('fstype','')}  Size: {p['size_human']}")
     while True:
         choice = input(f"Select a partition [1-{len(parts)}] or 'q' to quit: ").strip()
         if choice.lower() in ('q', 'quit', 'exit'):
             return None
         if not choice.isdigit():
-            print("Please enter a number.")
+            logger.info("Please enter a number.")
             continue
         idx = int(choice) - 1
         if 0 <= idx < len(parts):
             return parts[idx]
-        print("Selection out of range.")
+        logger.info("Selection out of range.")
 
 
 def _mkfs_command_for(fs_type, device, label=None):
@@ -496,16 +560,16 @@ def unmount_devices_for(node):
     to_unmount = [m for m in mounts if m == node or m.startswith(node)]
     if not to_unmount:
         return True
-    print("Mounted devices found:", ', '.join(to_unmount))
+    logger.info("Mounted devices found:", ', '.join(to_unmount))
     for m in to_unmount:
         cmd = ['umount', m]
         if os.geteuid() != 0:
             cmd = ['sudo'] + cmd
-        print("Running:", ' '.join(cmd))
+        logger.info("Running:", ' '.join(cmd))
         try:
             subprocess.run(cmd, check=True)
         except subprocess.CalledProcessError as e:
-            print("Failed to unmount", m, ":", e)
+            logger.error("Failed to unmount", m, ":", e)
             return False
     return True
 
@@ -517,7 +581,7 @@ def format_drive(device_node, fs_type='ext4', label=None, apiCheck=True):
     """
     if apiCheck:
         if apiObj.status != jobStates.IDLE:
-            print("Another job is currently running. Please wait until it finishes.")
+            logger.info("Another job is currently running. Please wait until it finishes.")
             return False
         else:
             apiObj.status = jobStates.FORMATTING
@@ -531,21 +595,21 @@ def format_drive(device_node, fs_type='ext4', label=None, apiCheck=True):
                 apiObj.status = jobStates.IDLE
             return False
 
-    print(f"About to format {device_node} as {fs_type}.")
+    logger.info(f"About to format {device_node} as {fs_type}.")
     cmd = _mkfs_command_for(fs_type, device_node, label)
     if os.geteuid() != 0:
         cmd = ['sudo'] + cmd
-    print("Running:", ' '.join(cmd))
+    logger.info("Running:", ' '.join(cmd))
     try:
         subprocess.run(cmd, check=True)
-        print("Formatting finished.")
+        logger.info("Formatting finished.")
         if apiCheck:
             apiObj.status = jobStates.IDLE
         apiObj.activityMessage = "Formatting complete"
         return True
     except subprocess.CalledProcessError as e:
         # need to log this
-        print("Formatting failed:", e)
+        logger.error("Formatting failed:", e)
         if apiCheck:
             apiObj.status = jobStates.IDLE
         apiObj.activityMessage = "Formatting failed"
@@ -555,7 +619,7 @@ def format_drive(device_node, fs_type='ext4', label=None, apiCheck=True):
 def run_nwipe(device_node, method='is5enh', orig_fs=None, orig_label=None):
 
     if apiObj.status != jobStates.IDLE:
-        print("Another job is currently running. Please wait until it finishes.")
+        logger.error("Another job is currently running. Please wait until it finishes.")
         return False
     
     apiObj.status = jobStates.WIPING
@@ -569,12 +633,14 @@ def run_nwipe(device_node, method='is5enh', orig_fs=None, orig_label=None):
         if not unmount_devices_for(device_node):
             apiObj.status = jobStates.IDLE
             apiObj.activityMessage = "Wipe failed: unable to unmount device"
+            logger.error("Unable to unmount device for wiping.")
             return False
 
     nwipe = shutil.which('nwipe')
     if not nwipe:
         apiObj.status = jobStates.IDLE
         apiObj.activityMessage = "nwipe not found. Install nwipe to use secure wipe (e.g. sudo apt install nwipe)."
+        logger.error("nwipe not found. Install nwipe to use secure wipe (e.g. sudo apt install nwipe).")
         return False
 
     apiObj.activityMessage = "Wiping in progress..."
@@ -582,7 +648,7 @@ def run_nwipe(device_node, method='is5enh', orig_fs=None, orig_label=None):
     if os.geteuid() != 0:
         cmd = ['sudo'] + cmd
 
-    print("Running:", ' '.join(cmd))
+    logger.info("Running:", ' '.join(cmd))
     try:
         proc = subprocess.Popen(
             cmd,
@@ -602,17 +668,17 @@ def run_nwipe(device_node, method='is5enh', orig_fs=None, orig_label=None):
             low = line.lower()
             # Detect final-random-pattern message and print a concise status
             if 'blanking device' in low:
-                print(low)
                 apiObj.activityMessage = "Wiping in progress... (blanking device)"
+                logger.info("NWipe: blanking device")
                 continue
 
             if 'verifying that' in low:
-                print(low)
                 apiObj.activityMessage = "Wiping in progress... (verifying)"
+                logger.info("NWipe: verifying that device is wiped")
                 continue
 
             if 'waiting for wipe thread to cancel for' in low:
-                print(low)
+                logger.info("NWipe: waiting for wipe thread to cancel")
                 apiObj.activityMessage = "Wiping complete, finishing up..."
                 continue
 
@@ -627,7 +693,7 @@ def run_nwipe(device_node, method='is5enh', orig_fs=None, orig_label=None):
                     if p != last_pass:
                         last_pass = p
                         apiObj.activityMessage = f"Wiping in progress... (pass {p})"
-                        print(f"NWipe: currently on pass {p}")
+                        logger.info(f"NWipe: currently on pass {p}")
                 except Exception:
                     pass
         ret = proc.wait()
@@ -637,30 +703,31 @@ def run_nwipe(device_node, method='is5enh', orig_fs=None, orig_label=None):
             audit_result,audit_passed = audit_disk(device_node)
 
             # log this to a file somewhere
-            print("Audit result after wipe:", json.dumps(audit_result, indent=2))
+            logger.info("Audit result after wipe: %s", json.dumps(audit_result, indent=2))
 
             if audit_passed:
                 apiObj.activityMessage = "Wipe successful"
             else:
                 apiObj.activityMessage = "Wipe completed but audit failed"
             # After a destructive wipe the filesystem and label are gone — recreate them.
-            print(f"Restoring filesystem {orig_fs} and label {orig_label!s} on {device_node} ...")
+            logger.info(f"Restoring filesystem {orig_fs} and label {orig_label!s} on {device_node} ...")
             ok = format_drive(device_node, fs_type=orig_fs, label=orig_label,apiCheck=False)
             if not ok:
-                print("Failed to restore filesystem/label after wipe.")
+                logger.error("Failed to restore filesystem/label after wipe.")
                 return False
             apiObj.status = jobStates.IDLE
+            logger.info("Wipe and audit completed successfully.")
             return audit_passed
         else:
             apiObj.activityMessage = "Wipe failed"
             # need to log this
-            print("Wipe failed, exit code", ret)
+            logger.error("Wipe failed, exit code: %d", ret)
             apiObj.status = jobStates.IDLE
             return False
     except Exception as e:
         apiObj.activityMessage = "Wipe failed"
         # need to log this
-        print("Wipe failed:", e)
+        logger.error("Wipe failed:", e)
         apiObj.status = jobStates.IDLE
         return False
 
@@ -734,6 +801,7 @@ def read_drives():
     """
     Get a list of USB drives.
     """
+    logger.info("Fetching USB drives")
     return get_usb_drives()
 
 @app.get("/drives_with_partitions")
@@ -743,12 +811,14 @@ def read_drives_with_partitions():
     Each drive dict will include a 'partitions' key containing a list of
     partition dicts as returned by get_partitions().
     """
+    logger.info("Fetching drives with partitions")
     drives = get_usb_drives()
     for d in drives:
         try:
             d['partitions'] = get_partitions(d['node'])
         except Exception:
             d['partitions'] = []
+    logger.info(f"Found drives with partitions: {drives}")
     return drives
 
 
@@ -760,7 +830,7 @@ def select_partition(selection: Selection):
     This endpoint currently echoes back the device node. It can be extended
     to trigger formatting/wiping operations as needed.
     """
-    # placeholder: simply return the received selection
+    logger.info(f"Received partition selection: {selection.device.node}")
     return {"selected": selection.device}
 
 @app.post("/wipe_device")
@@ -777,8 +847,10 @@ def wipe_device(selection: Selection):
         orig_fs=orig_fs,
         orig_label=orig_label
     ):
+        logger.error(f"Wipe initiation failed for device: {device.node}")
         return {"status": "wipe failed to start"}
 
+    logger.info(f"Wipe started for device: {device.node}")
     return {"status": "wipe started"}
 
 @app.post("/scan_device")
@@ -787,14 +859,29 @@ def scan_device(selection: Selection):
 
     logger.info(f"Received request to scan device: {device.node}")
 
-    if not av_scan(device.node):
+    if not av_scan_parition(device.node):
+        logger.error(f"Scan failed or infections found on device: {device.node}")
         return {"status": "scan failed or infections found"}
+    logger.info(f"Scan completed successfully for device: {device.node}")
+    return {"status": "scan complete, no infections found"}
+
+@app.post("/scan_folder")
+def scan_folder(req: scanRequest):
+
+    folder_path = os.path.join(DRIVE_PATH, req.folder)
+
+    logger.info(f"Received request to scan folder: {folder_path}")
+
+    if not av_scan_folder(folder_path):
+        logger.error(f"Scan failed or infections found in folder: {folder_path}")
+        return {"status": "scan failed or infections found"}
+    logger.info(f"Scan completed successfully for folder: {folder_path}")
     return {"status": "scan complete, no infections found"}
 
 # modify copy_device to create job and monitor
 @app.post("/copy_device")
 def copy_device(req: CopyRequest):
-
+    logger.info(f"Received request to copy from {req.src_folder} to {req.dst_folder}")
     src_path = os.path.join(DRIVE_PATH, req.src_folder)
     dst_path = os.path.join(DRIVE_PATH, req.dst_folder)
 
@@ -828,12 +915,13 @@ def copy_device(req: CopyRequest):
         apiObj.activityMessage = "Copy complete"
         apiObj.status = jobStates.IDLE
 
+        logger.info(f"Copy from {src_path} to {dst_path} completed successfully.")
         return {"status": "copy complete"}
 
     except Exception as e:
         apiObj.status = jobStates.IDLE
         apiObj.activityMessage = "Copy failed"
-
+        logger.error(f"Copy from {src_path} to {dst_path} failed: {e}")
         return {
             "status": "copy failed",
             "error": str(e)
@@ -841,6 +929,7 @@ def copy_device(req: CopyRequest):
 
 @app.get('/status')
 def get_status():
+    logger.info(f"Status requested: {apiObj.status.value}, message: {apiObj.activityMessage}")
     return {"status": apiObj.status.value, "activityMessage": apiObj.activityMessage}   
 
 @app.get("/folders")
@@ -853,5 +942,6 @@ def get_folders():
         if os.path.isdir(full_path):
             folders.append(item)
 
+    logger.info(f"Found folders: {folders}")
     return folders
 

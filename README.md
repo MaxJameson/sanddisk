@@ -5,6 +5,8 @@ A small utility to copy, scan and wipe drives
 - List USB drives and partitions (via pyudev)
 - Interactive selection of drive and partition
 - Secure wipe using nwipe (--method, --verify, --nogui)
+- AV Scan drives
+- Copy files between folders in a given directory
 - FastAPI endpoint: for running above features
 
 ## Requirements
@@ -29,7 +31,8 @@ pip3 install pyudev fastapi or sudo sudo apt install python3-pyudev python3-fast
 - Ensure the clam service is running:
   - sudo systemctl status clamav-daemon
 - Run the FastAPI endpoint (example with uvicorn):
-  sudo uvicorn sanddisk:app --reload --host 0.0.0.0 --port 8000
+  sudo PATH_VARIABLE=main/copy/folder uvicorn sanddisk:app --reload --host 0.0.0.0 --port 8000
+  - the PATH_VARIABLE is used for the copy function to define where copy folders live
   - Use POST requests to access relvant endpoints (example can be found in test folder)
 
 ## Notes and safety

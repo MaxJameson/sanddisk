@@ -78,26 +78,40 @@ pollSystemStatus();
 async function loadFolders() {
   const base = apiUrlInput.value.trim();
   const res = await fetch(base.replace(/\/$/, '') + '/folders');
-  if (!res.ok) throw new Error('Failed to load folders');
+
+  if (!res.ok) {
+    throw new Error('Failed to load folders');
+  }
+
   return await res.json();
 }
 
 async function populateFolders() {
   console.log('Populating folders...');
+
   try {
     const folders = await loadFolders();
 
     const srcSelect = document.getElementById('srcSelect');
     const dstSelect = document.getElementById('dstSelect');
+    const scanFolderSelect = document.getElementById('scanFolderSelect');
 
     if (!srcSelect || !dstSelect) return;
 
     srcSelect.innerHTML = '';
     dstSelect.innerHTML = '';
 
+    if (scanFolderSelect) {
+      scanFolderSelect.innerHTML = '';
+    }
+
     folders.forEach(folder => {
       srcSelect.add(new Option(folder, folder));
       dstSelect.add(new Option(folder, folder));
+
+      if (scanFolderSelect) {
+        scanFolderSelect.add(new Option(folder, folder));
+      }
     });
 
   } catch (err) {
@@ -138,6 +152,7 @@ function renderDrivesWithParts(drives) {
 
   drives.forEach(d => {
     const parts = d.partitions || [];
+
     if (!parts.length) return;
 
     html += `<optgroup label="${d.node} ${d.vendor || ''} ${d.model || ''}">`;
@@ -153,6 +168,7 @@ function renderDrivesWithParts(drives) {
 
   html += `
     </select>
+
     <button id="wipeBtn">Wipe</button>
     <button id="scanBtn">Scan</button>
 
@@ -171,88 +187,197 @@ function renderDrivesWithParts(drives) {
     </div>
 
     <button id="startCopyBtn">Start Copy</button>
+
+    <hr/>
+
+    <h4>AV Scan Folder</h4>
+
+    <div>
+      <label>Folder:</label>
+      <select id="scanFolderSelect" style="min-width:420px"></select>
+    </div>
+
+    <button id="scanFolderBtn">Start AV Scan</button>
   `;
 
   result.innerHTML = html;
 
-  // IMPORTANT: load folders AFTER rendering
   populateFolders();
 
   /* ================= WIPE ================= */
-  document.getElementById('wipeBtn')?.addEventListener('click', async () => {
-    const device = JSON.parse(document.getElementById('wipeSelect').value);
 
-    if (!confirm(`WIPE ${device.node}?`)) return;
+  document.getElementById('wipeBtn')?.addEventListener('click', async () => {
+
+    const device = JSON.parse(
+      document.getElementById('wipeSelect').value
+    );
+
+    if (!confirm(`WIPE ${device.node}?`)) {
+      return;
+    }
 
     showStatus(`Wiping ${device.node}...`);
 
-    await fetch(apiUrlInput.value.replace(/\/$/, '') + '/wipe_device', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ device })
-    });
+    await fetch(
+      apiUrlInput.value.replace(/\/$/, '') + '/wipe_device',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          device
+        })
+      }
+    );
   });
 
-  /* ================= SCAN ================= */
+  /* ================= DEVICE SCAN ================= */
+
   document.getElementById('scanBtn')?.addEventListener('click', async () => {
-    const device = JSON.parse(document.getElementById('wipeSelect').value);
+
+    const device = JSON.parse(
+      document.getElementById('wipeSelect').value
+    );
 
     showStatus(`Scanning ${device.node}...`);
 
-    await fetch(apiUrlInput.value.replace(/\/$/, '') + '/scan_device', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ device })
-    });
+    await fetch(
+      apiUrlInput.value.replace(/\/$/, '') + '/scan_device',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          device
+        })
+      }
+    );
   });
 
   /* ================= COPY ================= */
+
   document.getElementById('startCopyBtn')?.addEventListener('click', async () => {
 
     const src = document.getElementById('srcSelect').value;
     const dst = document.getElementById('dstSelect').value;
 
-    if (!src || !dst) return showStatus('Select folders');
-    if (src === dst) return showStatus('Must be different');
+    if (!src || !dst) {
+      return showStatus('Select folders');
+    }
+
+    if (src === dst) {
+      return showStatus('Must be different');
+    }
 
     showStatus(`Copying ${src} → ${dst}...`);
 
-    await fetch(apiUrlInput.value.replace(/\/$/, '') + '/copy_device', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        src_folder: src,
-        dst_folder: dst
-      })
-    });
+    try {
+      const response = await fetch(
+        apiUrlInput.value.replace(/\/$/, '') + '/copy_device',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            src_folder: src,
+            dst_folder: dst
+          })
+        }
+      );
+
+      const data = await response.json();
+
+      showStatus(data.status || 'Copy started');
+
+    } catch (err) {
+      showStatus('Copy failed: ' + err.message);
+    }
+  });
+
+  /* ================= FOLDER AV SCAN ================= */
+
+  document.getElementById('scanFolderBtn')?.addEventListener('click', async () => {
+
+    const folder = document.getElementById('scanFolderSelect').value;
+
+    if (!folder) {
+      return showStatus('Select a folder to scan');
+    }
+
+    showStatus(`Scanning folder ${folder}...`);
+
+    try {
+
+      const response = await fetch(
+        apiUrlInput.value.replace(/\/$/, '') + '/scan_folder',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            folder: folder
+          })
+        }
+      );
+
+      const data = await response.json();
+
+      showStatus(data.status || 'Scan request submitted');
+
+    } catch (err) {
+      showStatus('Scan failed: ' + err.message);
+    }
   });
 }
 
 /* ================= LOAD BUTTONS ================= */
 
 async function loadDrives() {
+
   const base = apiUrlInput.value.trim();
+
   showStatus('Loading drives...');
-  
-  const res = await fetch(base.replace(/\/$/, '') + '/drives');
+
+  const res = await fetch(
+    base.replace(/\/$/, '') + '/drives'
+  );
+
   const data = await res.json();
 
   renderDrives(data);
 }
 
 async function loadDrivesWithParts() {
+
   const base = apiUrlInput.value.trim();
+
   showStatus('Loading drives + partitions...');
 
-  console.log('Loading drives with partitions from:', base.replace(/\/$/, '') + '/drives_with_partitions');
-  const res = await fetch(base.replace(/\/$/, '') + '/drives_with_partitions');
+  console.log(
+    'Loading drives with partitions from:',
+    base.replace(/\/$/, '') + '/drives_with_partitions'
+  );
+
+  const res = await fetch(
+    base.replace(/\/$/, '') + '/drives_with_partitions'
+  );
+
   const data = await res.json();
+
   console.log('Received data:', data);
+
   renderDrivesWithParts(data);
 }
 
-document.getElementById('loadBtn').addEventListener('click', loadDrives);
-document.getElementById('loadWithPartsBtn').addEventListener('click', loadDrivesWithParts);
+document.getElementById('loadBtn')
+  .addEventListener('click', loadDrives);
+
+document.getElementById('loadWithPartsBtn')
+  .addEventListener('click', loadDrivesWithParts);
 
 </script>
 
