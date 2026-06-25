@@ -22,6 +22,8 @@ import math
 from typing import Optional
 from pydantic import BaseModel
 
+
+
 DRIVE_PATH = os.getenv("DRIVE_PATH") # Default path if not set
 
 class Device(BaseModel):
@@ -793,6 +795,16 @@ app.add_middleware(
 )
 
 logger = logging.getLogger("uvicorn")
+
+file_handler = logging.FileHandler("sanddisk.log")
+file_handler.setLevel(logging.INFO)
+
+formatter = logging.Formatter(
+    "%(asctime)s - %(levelname)s - %(message)s"
+)
+file_handler.setFormatter(formatter)
+
+logger.addHandler(file_handler)
 
 logger.info("Application started")
 

@@ -1,0 +1,40 @@
+2026-06-25 09:17:22,024 - INFO - Application started
+2026-06-25 09:17:22,030 - INFO - Started server process [7626]
+2026-06-25 09:17:22,031 - INFO - Waiting for application startup.
+2026-06-25 09:17:22,031 - INFO - Application startup complete.
+2026-06-25 09:17:22,394 - INFO - Status requested: IDLE, message: IDLE
+2026-06-25 09:17:24,378 - INFO - Status requested: IDLE, message: IDLE
+2026-06-25 09:17:26,377 - INFO - Status requested: IDLE, message: IDLE
+2026-06-25 09:17:28,378 - INFO - Status requested: IDLE, message: IDLE
+2026-06-25 09:17:30,397 - INFO - Status requested: IDLE, message: IDLE
+2026-06-25 09:17:30,671 - INFO - Fetching drives with partitions
+2026-06-25 09:17:30,697 - INFO - Found drives with partitions: []
+2026-06-25 09:17:30,706 - INFO - Looking for folders in /home/test/Documents/PretendDrive
+2026-06-25 09:17:30,707 - INFO - Found folders: ['PretendUSB1', 'PretentUSB2']
+2026-06-25 09:17:32,455 - INFO - Status requested: IDLE, message: IDLE
+2026-06-25 09:17:33,850 - INFO - Received request to scan folder: /home/test/Documents/PretendDrive/PretendUSB1
+2026-06-25 09:17:33,851 - INFO - Running: clamscan -r /home/test/Documents/PretendDrive/PretendUSB1
+2026-06-25 09:17:34,459 - INFO - Status requested: SCANNING, message: Scanning /home/test/Documents/PretendDrive/PretendUSB1 for viruses...
+2026-06-25 09:17:36,458 - INFO - Status requested: SCANNING, message: Scanning /home/test/Documents/PretendDrive/PretendUSB1 for viruses...
+2026-06-25 09:17:38,458 - INFO - Status requested: SCANNING, message: Scanning /home/test/Documents/PretendDrive/PretendUSB1 for viruses...
+2026-06-25 09:17:40,463 - INFO - Status requested: SCANNING, message: Scanning /home/test/Documents/PretendDrive/PretendUSB1 for viruses...
+2026-06-25 09:17:42,464 - INFO - Status requested: SCANNING, message: Scanning /home/test/Documents/PretendDrive/PretendUSB1 for viruses...
+2026-06-25 09:17:44,463 - INFO - Status requested: SCANNING, message: Scanning /home/test/Documents/PretendDrive/PretendUSB1 for viruses...
+2026-06-25 09:17:45,305 - INFO - Infected files found: 0
+2026-06-25 09:17:45,310 - INFO - Scan completed successfully with no infections found.
+2026-06-25 09:17:45,310 - INFO - Scan completed successfully for folder: /home/test/Documents/PretendDrive/PretendUSB1
+2026-06-25 09:17:46,467 - INFO - Status requested: IDLE, message: Scan complete: no infections found
+2026-06-25 09:17:48,467 - INFO - Status requested: IDLE, message: Scan complete: no infections found
+2026-06-25 09:17:50,468 - INFO - Status requested: IDLE, message: Scan complete: no infections found
+2026-06-25 09:17:52,479 - INFO - Status requested: IDLE, message: Scan complete: no infections found
+2026-06-25 09:17:54,480 - INFO - Status requested: IDLE, message: Scan complete: no infections found
+2026-06-25 09:17:56,480 - INFO - Status requested: IDLE, message: Scan complete: no infections found
+2026-06-25 09:17:58,481 - INFO - Status requested: IDLE, message: Scan complete: no infections found
+2026-06-25 09:18:00,481 - INFO - Status requested: IDLE, message: Scan complete: no infections found
+2026-06-25 09:18:02,481 - INFO - Status requested: IDLE, message: Scan complete: no infections found
+2026-06-25 09:18:04,492 - INFO - Status requested: IDLE, message: Scan complete: no infections found
+2026-06-25 09:18:06,493 - INFO - Status requested: IDLE, message: Scan complete: no infections found
+2026-06-25 09:18:08,317 - INFO - Shutting down
+2026-06-25 09:18:08,418 - INFO - Waiting for application shutdown.
+2026-06-25 09:18:08,419 - INFO - Application shutdown complete.
+2026-06-25 09:18:08,420 - INFO - Finished server process [7626]
