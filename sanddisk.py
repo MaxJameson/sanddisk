@@ -7,7 +7,7 @@ import sys
 import pyudev
 import shutil
 import tempfile
-from fastapi import FastAPI
+from fastapi import FastAPI, logger
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import time
@@ -56,6 +56,7 @@ class apiManager:
     def __init__(self):
         self.activityMessage = jobStates.IDLE.value
         self.status = jobStates.IDLE
+        self.process = None
 
 global apiObj 
 apiObj = apiManager()
@@ -70,10 +71,12 @@ def av_scan_parition(device_node):
     mountPoint = get_mountpoint(device_node)
     if not mountPoint:
         logger.error("Device is not mounted; cannot scan with ClamAV. Please mount the device and try again.")
+        apiObj.activityMessage = "Scan failed: device not mounted"
         return False
     
     if apiObj.status != jobStates.IDLE:
         logger.error("Another job is currently running. Please wait until it finishes.")
+        apiObj.activityMessage = f"Scan failed: another job {apiObj.status.value} is running"
         return False
     else:
         apiObj.status = jobStates.SCANNING
@@ -84,7 +87,7 @@ def av_scan_parition(device_node):
         cmd = ['sudo'] + cmd
     logger.info("Running: %s", ' '.join(cmd))
     try:
-        proc = subprocess.Popen(
+        apiObj.process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -96,7 +99,7 @@ def av_scan_parition(device_node):
         last_pass = None
         # Read lines as they arrive and print them; try to extract pass number
         infected_files = 0
-        for raw in proc.stdout:
+        for raw in apiObj.process.stdout:
             line = raw.rstrip('\r\n')
             # Print raw nwipe output so user sees messages
             if "infected files" in line.lower():
@@ -104,7 +107,7 @@ def av_scan_parition(device_node):
                 logger.info(f"Infected files found: {infected_files}")
 
             low = line.lower()
-        ret = proc.wait()
+        ret = apiObj.process.wait()
 
         if ret == 0:
             logger.info("Scan completed successfully with no infections found.")
@@ -116,6 +119,11 @@ def av_scan_parition(device_node):
             apiObj.status = jobStates.IDLE
             apiObj.activityMessage = f"Scan complete: {infected_files} infected files found"
             return False
+        elif ret == -9:
+            apiObj.activityMessage = "Scan cancelled"
+            logger.info("Scan was cancelled by the user.")
+            apiObj.status = jobStates.IDLE
+            return False
         else:
             logger.error("Scan completed with non-zero exit code: %d", ret)
             apiObj.status = jobStates.IDLE
@@ -123,9 +131,9 @@ def av_scan_parition(device_node):
             return False
 
     except Exception as e:
-        logger.error("Scan failed: %s", e)
+        logger.error("Scan Termintated: %s", e)
         apiObj.status = jobStates.IDLE
-        apiObj.activityMessage = "Scan failed"
+        apiObj.activityMessage = "Scan Terminated"
         return False
 
 def av_scan_folder(folder_path):
@@ -133,6 +141,7 @@ def av_scan_folder(folder_path):
     
     if apiObj.status != jobStates.IDLE:
         logger.error("Another job is currently running. Please wait until it finishes.")
+        apiObj.activityMessage = f"Scan failed: another job {apiObj.status.value} is running"
         return False
     else:
         apiObj.status = jobStates.SCANNING
@@ -143,7 +152,7 @@ def av_scan_folder(folder_path):
         cmd = ['sudo'] + cmd
     logger.info("Running: %s", ' '.join(cmd))
     try:
-        proc = subprocess.Popen(
+        apiObj.process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -155,7 +164,7 @@ def av_scan_folder(folder_path):
         last_pass = None
         # Read lines as they arrive and print them; try to extract pass number
         infected_files = 0
-        for raw in proc.stdout:
+        for raw in apiObj.process.stdout:
             line = raw.rstrip('\r\n')
             # Print raw nwipe output so user sees messages
             if "infected files" in line.lower():
@@ -163,7 +172,7 @@ def av_scan_folder(folder_path):
                 logger.info(f"Infected files found: {infected_files}")
 
             low = line.lower()
-        ret = proc.wait()
+        ret = apiObj.process.wait()
 
         if ret == 0:
             logger.info("Scan completed successfully with no infections found.")
@@ -175,6 +184,11 @@ def av_scan_folder(folder_path):
             apiObj.status = jobStates.IDLE
             apiObj.activityMessage = f"Scan complete: {infected_files} infected files found"
             return False
+        elif ret == -9:
+            apiObj.activityMessage = "Scan cancelled"
+            logger.info("Scan was cancelled by the user.")
+            apiObj.status = jobStates.IDLE
+            return False
         else:
             logger.error("Scan completed with non-zero exit code: %d", ret)
             apiObj.status = jobStates.IDLE
@@ -182,9 +196,9 @@ def av_scan_folder(folder_path):
             return False
 
     except Exception as e:
-        logger.error("Scan failed: %s", e)
+        logger.error("Scan Termintated: %s", e)
         apiObj.status = jobStates.IDLE
-        apiObj.activityMessage = "Scan failed"
+        apiObj.activityMessage = "Scan Terminated"
         return False
 
 
@@ -631,7 +645,7 @@ def run_nwipe(device_node, method='is5enh', orig_fs=None, orig_label=None):
         return False
     
     apiObj.status = jobStates.WIPING
-    apiObj.activityMessage = "Starting wipe..."
+    apiObj.activityMessage = "Initialising wipe..."
     """Run nwipe on the given device and stream its text output.
 
     Requires --nogui/--autonuke for parseable text output. Prints nwipe lines live
@@ -651,14 +665,14 @@ def run_nwipe(device_node, method='is5enh', orig_fs=None, orig_label=None):
         logger.error("nwipe not found. Install nwipe to use secure wipe (e.g. sudo apt install nwipe).")
         return False
 
-    apiObj.activityMessage = "Wiping in progress..."
+    apiObj.activityMessage = "Starting wipe..."
     cmd = [nwipe, f'--method={method}', '--verify=all', '--nogui', '--autonuke', device_node]
     if os.geteuid() != 0:
         cmd = ['sudo'] + cmd
 
     logger.info("Running: wipe")
     try:
-        proc = subprocess.Popen(
+        apiObj.process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -669,7 +683,7 @@ def run_nwipe(device_node, method='is5enh', orig_fs=None, orig_label=None):
         import re
         last_pass = None
         # Read lines as they arrive and print them; try to extract pass number.
-        for raw in proc.stdout:
+        for raw in apiObj.process.stdout:
             line = raw.rstrip('\r\n')
             # Print raw nwipe output so user sees messages
 
@@ -704,7 +718,7 @@ def run_nwipe(device_node, method='is5enh', orig_fs=None, orig_label=None):
                         logger.info(f"NWipe: currently on pass {p}")
                 except Exception:
                     pass
-        ret = proc.wait()
+        ret = apiObj.process.wait()
 
         if ret == 0:
             apiObj.activityMessage = "Wipe finished. Auditing device..."
@@ -726,6 +740,11 @@ def run_nwipe(device_node, method='is5enh', orig_fs=None, orig_label=None):
             apiObj.status = jobStates.IDLE
             logger.info("Wipe and audit completed successfully.")
             return audit_passed
+        elif ret == -9:
+            apiObj.activityMessage = "Wipe cancelled"
+            logger.info("Wipe was cancelled by the user.")
+            apiObj.status = jobStates.IDLE
+            return False
         else:
             apiObj.activityMessage = "Wipe failed"
             # need to log this
@@ -812,7 +831,7 @@ file_handler.setFormatter(formatter)
 
 logger.addHandler(file_handler)
 
-logger.info("Application started")
+logger.info("\n=====================================\n\nAPPLICATION STARTED\n\n=====================================")
 
 @app.get("/drives")
 def read_drives():
@@ -970,4 +989,18 @@ def get_folders():
 
     logger.info(f"Found folders: {folders}")
     return folders
+
+@app.get("/kill_process")
+def killProcesss():
+    if apiObj.process and apiObj.process.poll() is None:
+        logger.info("Terminating ongoing process (this may take a moment)...")
+        apiObj.process.kill()
+        apiObj.process.wait()
+        apiObj.process = None
+        apiObj.status = jobStates.IDLE
+        apiObj.activityMessage = "Process terminated"
+    else:
+        logger.info("No ongoing process to terminate.")
+        apiObj.status = jobStates.IDLE
+        apiObj.activityMessage = "No process running"
 
