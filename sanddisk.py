@@ -104,9 +104,16 @@ def av_scan_parition(device_node):
             # Print raw nwipe output so user sees messages
             if "infected files" in line.lower():
                 infected_files = int(line.split(":")[-1].strip())
-                logger.info(f"Infected files found: {infected_files}")
+                logger.error(f"Infected files found: {infected_files}")
 
             low = line.lower()
+
+        if apiObj.process == None:
+            logger.error("Scan Termintated")
+            apiObj.status = jobStates.IDLE
+            apiObj.activityMessage = "Scan Terminated"
+            return False
+
         ret = apiObj.process.wait()
 
         if ret == 0:
@@ -169,9 +176,16 @@ def av_scan_folder(folder_path):
             # Print raw nwipe output so user sees messages
             if "infected files" in line.lower():
                 infected_files = int(line.split(":")[-1].strip())
-                logger.info(f"Infected files found: {infected_files}")
+                logger.error(f"Infected files found: {infected_files}")
 
             low = line.lower()
+
+        if apiObj.process == None:
+            logger.error("Scan Termintated")
+            apiObj.status = jobStates.IDLE
+            apiObj.activityMessage = "Scan Terminated"
+            return False
+
         ret = apiObj.process.wait()
 
         if ret == 0:
@@ -718,6 +732,13 @@ def run_nwipe(device_node, method='is5enh', orig_fs=None, orig_label=None):
                         logger.info(f"NWipe: currently on pass {p}")
                 except Exception:
                     pass
+
+        if apiObj.process == None:
+            logger.error("Wipe Termintated")
+            apiObj.status = jobStates.IDLE
+            apiObj.activityMessage = "Wipe Terminated"
+            return False
+
         ret = apiObj.process.wait()
 
         if ret == 0:
@@ -752,9 +773,9 @@ def run_nwipe(device_node, method='is5enh', orig_fs=None, orig_label=None):
             apiObj.status = jobStates.IDLE
             return False
     except Exception as e:
-        apiObj.activityMessage = "Wipe failed"
+        apiObj.activityMessage = "Wipe Terminted"
         # need to log this
-        logger.error("Wipe failed:", e)
+        logger.error("Wipe terminated:", e)
         apiObj.status = jobStates.IDLE
         return False
 
@@ -897,7 +918,6 @@ def scan_device(selection: Selection):
     logger.info(f"Received request to scan device: {device.node}")
 
     if not av_scan_parition(device.node):
-        logger.error(f"Scan failed or infections found on device: {device.node}")
         return {"status": "scan failed or infections found"}
     logger.info(f"Scan completed successfully for device: {device.node}")
     return {"status": "scan complete, no infections found"}
@@ -910,7 +930,6 @@ def scan_folder(req: scanRequest):
     logger.info(f"Received request to scan folder: {folder_path}")
 
     if not av_scan_folder(folder_path):
-        logger.error(f"Scan failed or infections found in folder: {folder_path}")
         return {"status": "scan failed or infections found"}
     logger.info(f"Scan completed successfully for folder: {folder_path}")
     return {"status": "scan complete, no infections found"}
