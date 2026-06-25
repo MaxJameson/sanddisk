@@ -32,6 +32,7 @@ pip3 install pyudev fastapi or sudo sudo apt install python3-pyudev python3-fast
   - sudo systemctl status clamav-daemon
 - Run the FastAPI endpoint (example with uvicorn):
   sudo PATH_VARIABLE=main/copy/folder uvicorn sanddisk:app --reload --host 0.0.0.0 --port 8000
+  - sudo is required to allow access to file access, AV scanning and drive wiping
   - the PATH_VARIABLE is used for the copy function to define where copy folders live
   - Use POST requests to access relvant endpoints (example can be found in test folder)
 
