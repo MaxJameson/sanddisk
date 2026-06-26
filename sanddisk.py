@@ -44,6 +44,9 @@ class CopyRequest(BaseModel):
 class scanRequest(BaseModel):
     folder: str
 
+class partitionRequest(BaseModel):
+    drive: dict
+    partName: str
 
 class jobStates(Enum):
     WIPING = "WIPING"
@@ -51,6 +54,7 @@ class jobStates(Enum):
     COPYING = "COPYING"
     SCANNING = "SCANNING"
     FORMATTING = "FORMATTING"
+    PARTITIONING = "PARTITIONING"
 
 class apiManager:
     def __init__(self):
@@ -779,6 +783,86 @@ def run_nwipe(device_node, method='is5enh', orig_fs=None, orig_label=None):
         apiObj.status = jobStates.IDLE
         return False
 
+def drives_No_Paritions():
+    drives = get_usb_drives()
+    emptyDrives = []
+
+    for d in drives:
+        try:
+            parts = get_partitions(d['node'])
+        except Exception:
+            parts = []
+        if not parts:
+            emptyDrives.append(d)
+    return emptyDrives
+
+def parition_Drive(drive,partName):
+
+    if apiObj.status != jobStates.IDLE:
+        logger.error("Another job is currently running. Please wait until it finishes.")
+        return False
+    
+    apiObj.status = jobStates.PARTITIONING
+    apiObj.activityMessage = "Initialising partitioning..."
+    logger.info(f"Partitioning drive {drive['node']} with partition name: {partName}")
+
+    try:
+    
+        filesystem_label = partName.upper()
+        disk = drive['node']
+        def run(cmd):
+            subprocess.run(cmd, check=True)
+
+        # Create a new GPT partition table
+        run(["sudo", "parted", "-s", disk, "mklabel", "gpt"])
+
+        # Create a 4 GiB partition
+        run([
+            "sudo", "parted", "-s",
+            disk,
+            "mkpart",
+            "primary",
+            "ext4",
+            "1MiB",
+            "4097MiB",
+        ])
+
+        # Name the partition
+        run([
+            "sudo", "parted", "-s",
+            disk,
+            "name",
+            "1",
+            partName,
+        ])
+
+        # Notify the kernel of the partition table change
+        run(["sudo", "partprobe", disk])
+
+        partition = f"{disk}1"
+
+        # Optionally format it
+        if filesystem_label:
+            run([
+                "sudo",
+                "mkfs.ext4",
+                "-F",
+                "-L",
+                filesystem_label,
+                partition,
+            ])
+        
+        apiObj.status = jobStates.IDLE
+        apiObj.activityMessage = "Drive partitioned successfully"
+        logger.info(f"Partition created successfully: {partition} with label {filesystem_label}")
+
+        return True
+
+    except Exception as e:
+        apiObj.status = jobStates.IDLE
+        apiObj.activityMessage = "Partitioning failed"
+        logger.error("Error occurred while partitioning drive: %s", e)
+        return False
 
 def localWipeLogic():
     """
@@ -1023,3 +1107,23 @@ def killProcesss():
         apiObj.status = jobStates.IDLE
         apiObj.activityMessage = "No process running"
 
+@app.get("/empty_drives")
+def emptyDrives():
+    drives = drives_No_Paritions()
+    return drives   
+
+
+@app.post("/partition_drive")
+def partitionDrive(partitionReq: partitionRequest):
+    drive = partitionReq.drive
+    partName = partitionReq.partName
+
+    logger.info(f"Received request to partition drive: {drive['node']} with partition name: {partName}")
+
+    partition = parition_Drive(drive, partName)
+    if partition:
+        logger.info(f"Partition created successfully: {partition}")
+        return {"status": "partition created", "partition": partition}
+    else:
+        logger.error(f"Partitioning failed for drive: {drive['node']}")
+        return {"status": "partitioning failed", "error": "Unable to create partition"}
