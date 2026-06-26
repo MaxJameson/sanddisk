@@ -26,6 +26,12 @@
     #killProcessBtn:hover {
       background: #b71c1c;
     }
+
+    #partitionBtn {
+      margin-top: 10px;
+      padding: 8px 16px;
+      font-weight: bold;
+    }
   </style>
 </head>
 
@@ -40,9 +46,7 @@
 </div>
 
 <div style="margin-bottom: 10px;">
-  <button id="killProcessBtn">
-    Kill Running Process
-  </button>
+  <button id="killProcessBtn">Kill Running Process</button>
 </div>
 
 <div class="controls">
@@ -55,6 +59,22 @@
 
 <div id="status"></div>
 <div id="result"></div>
+
+<hr/>
+
+<h4>Partition Empty Drive (4GB)</h4>
+
+<div>
+  <label>Drive:</label>
+  <select id="emptyDriveSelect" style="min-width:420px"></select>
+</div>
+
+<div style="margin-top:8px;">
+  <label>Partition Name:</label>
+  <input id="partNameInput" type="text" placeholder="e.g. DATA" />
+</div>
+
+<button id="partitionBtn">Create Partition</button>
 
 <script>
 
@@ -98,12 +118,9 @@ pollSystemStatus();
 document.getElementById('killProcessBtn')
   .addEventListener('click', async () => {
 
-    if (!confirm('Terminate the currently running process?')) {
-      return;
-    }
+    if (!confirm('Terminate the currently running process?')) return;
 
     try {
-
       showStatus('Sending terminate request...');
 
       const response = await fetch(
@@ -111,7 +128,6 @@ document.getElementById('killProcessBtn')
       );
 
       const data = await response.json();
-
       showStatus(data.status || 'Terminate request sent');
 
       pollSystemStatus();
@@ -121,53 +137,24 @@ document.getElementById('killProcessBtn')
     }
   });
 
-/* ================= FOLDERS ================= */
+/* ================= EMPTY DRIVES ================= */
 
-async function loadFolders() {
+async function loadEmptyDrives() {
   const base = apiUrlInput.value.trim();
-  const res = await fetch(base.replace(/\/$/, '') + '/folders');
 
-  if (!res.ok) {
-    throw new Error('Failed to load folders');
-  }
+  const res = await fetch(base.replace(/\/$/, '') + '/empty_drives');
+  const drives = await res.json();
 
-  return await res.json();
+  const select = document.getElementById('emptyDriveSelect');
+  select.innerHTML = '';
+
+  drives.forEach(d => {
+    const label = `${d.node} ${d.vendor || ''} ${d.model || ''} ${d.size_human || ''}`;
+    select.add(new Option(label, JSON.stringify(d)));
+  });
 }
 
-async function populateFolders() {
-  console.log('Populating folders...');
-
-  try {
-    const folders = await loadFolders();
-
-    const srcSelect = document.getElementById('srcSelect');
-    const dstSelect = document.getElementById('dstSelect');
-    const scanFolderSelect = document.getElementById('scanFolderSelect');
-
-    if (!srcSelect || !dstSelect) return;
-
-    srcSelect.innerHTML = '';
-    dstSelect.innerHTML = '';
-
-    if (scanFolderSelect) {
-      scanFolderSelect.innerHTML = '';
-    }
-
-    folders.forEach(folder => {
-      srcSelect.add(new Option(folder, folder));
-      dstSelect.add(new Option(folder, folder));
-
-      if (scanFolderSelect) {
-        scanFolderSelect.add(new Option(folder, folder));
-      }
-    });
-
-  } catch (err) {
-    showStatus('Folder load error: ' + err.message);
-  }
-}
-
-/* ================= RENDER DRIVES ================= */
+/* ================= TABLE VIEW ================= */
 
 function renderDrives(drives) {
   let html = '<table><thead><tr>' +
@@ -188,7 +175,7 @@ function renderDrives(drives) {
   result.innerHTML = html;
 }
 
-/* ================= DRIVES + PARTITIONS ================= */
+/* ================= PARTITION UI ================= */
 
 function renderDrivesWithParts(drives) {
 
@@ -251,160 +238,111 @@ function renderDrivesWithParts(drives) {
   result.innerHTML = html;
 
   populateFolders();
-
-  document.getElementById('wipeBtn')?.addEventListener('click', async () => {
-
-    const device = JSON.parse(
-      document.getElementById('wipeSelect').value
-    );
-
-    if (!confirm(`WIPE ${device.node}?`)) {
-      return;
-    }
-
-    showStatus(`Wiping ${device.node}...`);
-
-    await fetch(
-      apiUrlInput.value.replace(/\/$/, '') + '/wipe_device',
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          device
-        })
-      }
-    );
-  });
-
-  document.getElementById('scanBtn')?.addEventListener('click', async () => {
-
-    const device = JSON.parse(
-      document.getElementById('wipeSelect').value
-    );
-
-    showStatus(`Scanning ${device.node}...`);
-
-    await fetch(
-      apiUrlInput.value.replace(/\/$/, '') + '/scan_device',
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          device
-        })
-      }
-    );
-  });
-
-  document.getElementById('startCopyBtn')?.addEventListener('click', async () => {
-
-    const src = document.getElementById('srcSelect').value;
-    const dst = document.getElementById('dstSelect').value;
-
-    if (!src || !dst) {
-      return showStatus('Select folders');
-    }
-
-    if (src === dst) {
-      return showStatus('Must be different');
-    }
-
-    showStatus(`Copying ${src} → ${dst}...`);
-
-    try {
-      const response = await fetch(
-        apiUrlInput.value.replace(/\/$/, '') + '/copy_device',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            src_folder: src,
-            dst_folder: dst
-          })
-        }
-      );
-
-      const data = await response.json();
-
-      showStatus(data.status || 'Copy started');
-
-    } catch (err) {
-      showStatus('Copy failed: ' + err.message);
-    }
-  });
-
-  document.getElementById('scanFolderBtn')?.addEventListener('click', async () => {
-
-    const folder = document.getElementById('scanFolderSelect').value;
-
-    if (!folder) {
-      return showStatus('Select a folder to scan');
-    }
-
-    showStatus(`Scanning folder ${folder}...`);
-
-    try {
-
-      const response = await fetch(
-        apiUrlInput.value.replace(/\/$/, '') + '/scan_folder',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            folder: folder
-          })
-        }
-      );
-
-      const data = await response.json();
-
-      showStatus(data.status || 'Scan request submitted');
-
-    } catch (err) {
-      showStatus('Scan failed: ' + err.message);
-    }
-  });
 }
 
-/* ================= LOAD BUTTONS ================= */
+/* ================= FOLDERS ================= */
+
+async function loadFolders() {
+  const base = apiUrlInput.value.trim();
+  const res = await fetch(base.replace(/\/$/, '') + '/folders');
+  return await res.json();
+}
+
+async function populateFolders() {
+  try {
+    const folders = await loadFolders();
+
+    const srcSelect = document.getElementById('srcSelect');
+    const dstSelect = document.getElementById('dstSelect');
+    const scanFolderSelect = document.getElementById('scanFolderSelect');
+
+    if (!srcSelect || !dstSelect) return;
+
+    srcSelect.innerHTML = '';
+    dstSelect.innerHTML = '';
+
+    if (scanFolderSelect) scanFolderSelect.innerHTML = '';
+
+    folders.forEach(folder => {
+      srcSelect.add(new Option(folder, folder));
+      dstSelect.add(new Option(folder, folder));
+      if (scanFolderSelect) scanFolderSelect.add(new Option(folder, folder));
+    });
+
+  } catch (err) {
+    showStatus('Folder load error: ' + err.message);
+  }
+}
+
+/* ================= LOAD DRIVES ================= */
 
 async function loadDrives() {
-
   const base = apiUrlInput.value.trim();
 
   showStatus('Loading drives...');
 
-  const res = await fetch(
-    base.replace(/\/$/, '') + '/drives'
-  );
-
+  const res = await fetch(base.replace(/\/$/, '') + '/drives');
   const data = await res.json();
 
   renderDrives(data);
+
+  await loadEmptyDrives();
 }
 
-async function loadDrivesWithParts() {
+/* ================= LOAD DRIVES + PARTITIONS (FIXED) ================= */
 
+async function loadDrivesWithParts() {
   const base = apiUrlInput.value.trim();
 
   showStatus('Loading drives + partitions...');
 
-  const res = await fetch(
-    base.replace(/\/$/, '') + '/drives_with_partitions'
-  );
-
+  const res = await fetch(base.replace(/\/$/, '') + '/drives_with_partitions');
   const data = await res.json();
 
   renderDrivesWithParts(data);
+
+  // ✅ FIX: ensure dropdown is populated here too
+  await loadEmptyDrives();
 }
+
+/* ================= PARTITION ACTION ================= */
+
+document.getElementById('partitionBtn')
+  .addEventListener('click', async () => {
+
+    const select = document.getElementById('emptyDriveSelect');
+    const partName = document.getElementById('partNameInput').value.trim();
+
+    if (!select.value) return showStatus('Select a drive');
+    if (!partName) return showStatus('Enter partition name');
+
+    const drive = JSON.parse(select.value);
+
+    showStatus(`Partitioning ${drive.node}...`);
+
+    try {
+      const base = apiUrlInput.value.trim();
+
+      const res = await fetch(base.replace(/\/$/, '') + '/partition_drive', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          drive,
+          partName
+        })
+      });
+
+      const data = await res.json();
+      showStatus(data.status || 'Done');
+
+      await loadEmptyDrives();
+
+    } catch (err) {
+      showStatus('Partition failed: ' + err.message);
+    }
+  });
+
+/* ================= BUTTONS ================= */
 
 document.getElementById('loadBtn')
   .addEventListener('click', loadDrives);
