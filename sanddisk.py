@@ -4,6 +4,7 @@ import subprocess
 import json
 import os
 import sys
+from fastapi.concurrency import asynccontextmanager
 import pyudev
 import shutil
 import tempfile
@@ -919,6 +920,16 @@ def find_media_name(drive):
 
 app = FastAPI()
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Runs on startup
+    if os.geteuid() != 0:
+        print("This application must be run as root (sudo).")
+        sys.exit(1)
+    yield  # app runs here
+
+
+app = FastAPI(lifespan=lifespan)
 
 # Enable CORS for development/testing so the Test Site page can fetch the API
 app.add_middleware(
