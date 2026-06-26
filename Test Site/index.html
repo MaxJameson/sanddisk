@@ -74,6 +74,15 @@
   <input id="partNameInput" type="text" placeholder="e.g. DATA" />
 </div>
 
+<!-- ✅ NEW: File system selector -->
+<div style="margin-top:8px;">
+  <label>File System:</label>
+  <select id="fileSystemSelect">
+    <option value="ntfs">NTFS</option>
+    <option value="ext4">EXT4</option>
+  </select>
+</div>
+
 <button id="partitionBtn">Create Partition</button>
 
 <script>
@@ -289,7 +298,7 @@ async function loadDrives() {
   await loadEmptyDrives();
 }
 
-/* ================= LOAD DRIVES + PARTITIONS (FIXED) ================= */
+/* ================= LOAD DRIVES + PARTITIONS ================= */
 
 async function loadDrivesWithParts() {
   const base = apiUrlInput.value.trim();
@@ -301,7 +310,6 @@ async function loadDrivesWithParts() {
 
   renderDrivesWithParts(data);
 
-  // ✅ FIX: ensure dropdown is populated here too
   await loadEmptyDrives();
 }
 
@@ -312,13 +320,15 @@ document.getElementById('partitionBtn')
 
     const select = document.getElementById('emptyDriveSelect');
     const partName = document.getElementById('partNameInput').value.trim();
+    const fileFormat = document.getElementById('fileSystemSelect').value;
 
     if (!select.value) return showStatus('Select a drive');
     if (!partName) return showStatus('Enter partition name');
+    if (!fileFormat) return showStatus('Select file system');
 
     const drive = JSON.parse(select.value);
 
-    showStatus(`Partitioning ${drive.node}...`);
+    showStatus(`Partitioning ${drive.node} (${fileFormat})...`);
 
     try {
       const base = apiUrlInput.value.trim();
@@ -328,7 +338,8 @@ document.getElementById('partitionBtn')
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           drive,
-          partName
+          partName,
+          fileFormat
         })
       });
 

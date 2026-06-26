@@ -47,6 +47,7 @@ class scanRequest(BaseModel):
 class partitionRequest(BaseModel):
     drive: dict
     partName: str
+    fileFormat: str
 
 class jobStates(Enum):
     WIPING = "WIPING"
@@ -796,7 +797,7 @@ def drives_No_Paritions():
             emptyDrives.append(d)
     return emptyDrives
 
-def parition_Drive(drive,partName):
+def partition_Drive(drive,partName,fileFormat='ext4'):
 
     if apiObj.status != jobStates.IDLE:
         logger.error("Another job is currently running. Please wait until it finishes.")
@@ -814,20 +815,23 @@ def parition_Drive(drive,partName):
             subprocess.run(cmd, check=True)
 
         # Create a new GPT partition table
+        apiObj.activityMessage = "Creating new GPT partition table..."
         run(["sudo", "parted", "-s", disk, "mklabel", "gpt"])
 
         # Create a 4 GiB partition
+        apiObj.activityMessage = "Creating 4 GiB partition..."
         run([
             "sudo", "parted", "-s",
             disk,
             "mkpart",
             "primary",
-            "ext4",
+            fileFormat,
             "1MiB",
             "4097MiB",
         ])
 
         # Name the partition
+        apiObj.activityMessage = "Naming partition..."
         run([
             "sudo", "parted", "-s",
             disk,
@@ -837,6 +841,7 @@ def parition_Drive(drive,partName):
         ])
 
         # Notify the kernel of the partition table change
+        apiObj.activityMessage = "Notifying kernel of partition table change..."
         run(["sudo", "partprobe", disk])
 
         partition = f"{disk}1"
@@ -845,13 +850,13 @@ def parition_Drive(drive,partName):
         if filesystem_label:
             run([
                 "sudo",
-                "mkfs.ext4",
+                "mkfs." + fileFormat,
                 "-F",
                 "-L",
                 filesystem_label,
                 partition,
             ])
-        
+
         apiObj.status = jobStates.IDLE
         apiObj.activityMessage = "Drive partitioned successfully"
         logger.info(f"Partition created successfully: {partition} with label {filesystem_label}")
@@ -1117,10 +1122,11 @@ def emptyDrives():
 def partitionDrive(partitionReq: partitionRequest):
     drive = partitionReq.drive
     partName = partitionReq.partName
+    fileFormat = partitionReq.fileFormat
 
     logger.info(f"Received request to partition drive: {drive['node']} with partition name: {partName}")
 
-    partition = parition_Drive(drive, partName)
+    partition = partition_Drive(drive, partName, fileFormat)
     if partition:
         logger.info(f"Partition created successfully: {partition}")
         return {"status": "partition created", "partition": partition}
