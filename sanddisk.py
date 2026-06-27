@@ -29,11 +29,11 @@ DRIVE_PATH = os.getenv("DRIVE_PATH") # Default path if not set
 
 class Device(BaseModel):
     node: str
-    number: str
-    fstype: str | None = None
-    label: str | None = None
-    size: int
-    size_human: str
+    number: Optional[str] = None
+    fstype: Optional[str] = None
+    label: Optional[str] = None
+    size: Optional[int] = None
+    size_human: Optional[str] = None
 
 class Selection(BaseModel):
     device: Device
@@ -685,7 +685,7 @@ def run_nwipe(device_node, method='is5enh', orig_fs=None, orig_label=None):
         logger.error("nwipe not found. Install nwipe to use secure wipe (e.g. sudo apt install nwipe).")
         return False
 
-    apiObj.activityMessage = "Starting wipe..."
+    apiObj.activityMessage = "Initialising wipe..."
     cmd = [nwipe, f'--method={method}', '--verify=all', '--nogui', '--autonuke', device_node]
     if os.geteuid() != 0:
         cmd = ['sudo'] + cmd
@@ -709,6 +709,7 @@ def run_nwipe(device_node, method='is5enh', orig_fs=None, orig_label=None):
 
             low = line.lower()
             # Detect final-random-pattern message and print a concise status
+            logger.info(line)
             if 'blanking device' in low:
                 apiObj.activityMessage = "Wiping in progress... (blanking device)"
                 logger.info("NWipe: blanking device")
