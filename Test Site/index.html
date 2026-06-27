@@ -246,6 +246,115 @@ function renderDrivesWithParts(drives) {
 
   result.innerHTML = html;
 
+  const wipeBtn = document.getElementById('wipeBtn');
+  const scanBtn = document.getElementById('scanBtn');
+  const startCopyBtn = document.getElementById('startCopyBtn');
+  const scanFolderBtn = document.getElementById('scanFolderBtn');
+
+  if (wipeBtn) {
+    wipeBtn.addEventListener('click', async () => {
+      const wipeSelect = document.getElementById('wipeSelect');
+      const selected = wipeSelect?.value;
+      if (!selected) {
+        return showStatus('Select a device partition to wipe');
+      }
+
+      const device = JSON.parse(selected);
+      showStatus(`Wiping device ${device.node}...`);
+      try {
+        const base = apiUrlInput.value.trim();
+        const res = await fetch(base.replace(/\/$/, '') + '/wipe_device', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ device })
+        });
+        const data = await res.json();
+        showStatus(data.status || 'Wipe request sent');
+      } catch (err) {
+        showStatus('Wipe failed: ' + err.message);
+      }
+    });
+  }
+
+  if (scanBtn) {
+    scanBtn.addEventListener('click', async () => {
+      const wipeSelect = document.getElementById('wipeSelect');
+      const selected = wipeSelect?.value;
+      if (!selected) {
+        return showStatus('Select a device partition to scan');
+      }
+
+      const device = JSON.parse(selected);
+      showStatus(`Scanning device ${device.node}...`);
+      try {
+        const base = apiUrlInput.value.trim();
+        const res = await fetch(base.replace(/\/$/, '') + '/scan_device', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ device })
+        });
+        const data = await res.json();
+        showStatus(data.status || 'Scan request sent');
+      } catch (err) {
+        showStatus('Scan failed: ' + err.message);
+      }
+    });
+  }
+
+  if (startCopyBtn) {
+    startCopyBtn.addEventListener('click', async () => {
+      const srcSelect = document.getElementById('srcSelect');
+      const dstSelect = document.getElementById('dstSelect');
+      const srcFolder = srcSelect?.value;
+      const dstFolder = dstSelect?.value;
+
+      if (!srcFolder || !dstFolder) {
+        return showStatus('Select both source and destination folders');
+      }
+      if (srcFolder === dstFolder) {
+        return showStatus('Source and destination must differ');
+      }
+
+      showStatus(`Copying ${srcFolder} to ${dstFolder}...`);
+      try {
+        const base = apiUrlInput.value.trim();
+        const res = await fetch(base.replace(/\/$/, '') + '/copy_device', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ src_folder: srcFolder, dst_folder: dstFolder })
+        });
+        const data = await res.json();
+        showStatus(data.status || 'Copy request sent');
+      } catch (err) {
+        showStatus('Copy failed: ' + err.message);
+      }
+    });
+  }
+
+  if (scanFolderBtn) {
+    scanFolderBtn.addEventListener('click', async () => {
+      const scanFolderSelect = document.getElementById('scanFolderSelect');
+      const folder = scanFolderSelect?.value;
+      if (!folder) {
+        return showStatus('Select a folder to scan');
+      }
+
+      showStatus(`Scanning folder ${folder}...`);
+      try {
+        const base = apiUrlInput.value.trim();
+        const res = await fetch(base.replace(/\/$/, '') + '/scan_folder', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ folder })
+        });
+        const data = await res.json();
+        showStatus(data.status || 'Scan request sent');
+      } catch (err) {
+        showStatus('Scan failed: ' + err.message);
+      }
+    });
+  }
+
   populateFolders();
 }
 
