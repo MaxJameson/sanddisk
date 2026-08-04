@@ -686,27 +686,41 @@ def run_nwipe(device_node, method='is5enh', orig_fs=None, orig_label=None):
         return False
 
     apiObj.activityMessage = "Initialising wipe..."
-    cmd = [nwipe, f'--method={method}', '--verify=all', '--nogui', '--autonuke', device_node]
-    if os.geteuid() != 0:
-        cmd = ['sudo'] + cmd
 
     logger.info("Running: wipe")
     try:
+
+        cmd = [
+            "stdbuf",
+            "-oL",   # line-buffer stdout
+            "-eL",   # line-buffer stderr
+            nwipe,
+            f"--method={method}",
+            "--verify=all",
+            "--nogui",
+            "--autonuke",
+            device_node,
+        ]
+
+        if os.geteuid() != 0:
+            cmd = ["sudo"] + cmd
+
         apiObj.process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
-            universal_newlines=True,
         )
         import re
         last_pass = None
         # Read lines as they arrive and print them; try to extract pass number.
-        for raw in apiObj.process.stdout:
+        while True:
+            raw = apiObj.process.stdout.readline()
+            if not raw:
+                break
             line = raw.rstrip('\r\n')
             # Print raw nwipe output so user sees messages
-
             low = line.lower()
             # Detect final-random-pattern message and print a concise status
             logger.info(line)
