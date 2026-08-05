@@ -110,7 +110,10 @@ def av_scan_parition(device_node):
             # Print raw nwipe output so user sees messages
             if "infected files" in line.lower():
                 infected_files = int(line.split(":")[-1].strip())
-                logger.error(f"Infected files found: {infected_files}")
+                if infected_files > 0:
+                    logger.error(f"Infected files found: {infected_files}")
+                else:
+                    logger.info(f"Infected files found: {infected_files}")
 
             low = line.lower()
 
@@ -182,7 +185,10 @@ def av_scan_folder(folder_path):
             # Print raw nwipe output so user sees messages
             if "infected files" in line.lower():
                 infected_files = int(line.split(":")[-1].strip())
-                logger.error(f"Infected files found: {infected_files}")
+                if infected_files > 0:
+                    logger.error(f"Infected files found: {infected_files}")
+                else:
+                    logger.info(f"Infected files found: {infected_files}")
 
             low = line.lower()
 
