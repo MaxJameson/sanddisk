@@ -110,7 +110,10 @@ def av_scan_parition(device_node):
             # Print raw nwipe output so user sees messages
             if "infected files" in line.lower():
                 infected_files = int(line.split(":")[-1].strip())
-                logger.error(f"Infected files found: {infected_files}")
+                if infected_files > 0:
+                    logger.error(f"Infected files found: {infected_files}")
+                else:
+                    logger.info("No infected files found.")
 
             low = line.lower()
 
@@ -128,7 +131,7 @@ def av_scan_parition(device_node):
             apiObj.activityMessage = "Scan complete: no infections found"
             return True
         if ret == 1:
-            logger.info(f"Scan completed with infections found: {infected_files} infected files.")
+            logger.error(f"Scan completed with infections found: {infected_files} infected files.")
             apiObj.status = jobStates.IDLE
             apiObj.activityMessage = f"Scan complete: {infected_files} infected files found"
             return False
@@ -182,8 +185,11 @@ def av_scan_folder(folder_path):
             # Print raw nwipe output so user sees messages
             if "infected files" in line.lower():
                 infected_files = int(line.split(":")[-1].strip())
-                logger.error(f"Infected files found: {infected_files}")
-
+                if infected_files > 0:
+                    logger.error(f"Infected files found: {infected_files}")
+                else:
+                    logger.info("No infected files found.")
+            
             low = line.lower()
 
         if apiObj.process == None:
@@ -200,7 +206,7 @@ def av_scan_folder(folder_path):
             apiObj.activityMessage = "Scan complete: no infections found"
             return True
         if ret == 1:
-            logger.info(f"Scan completed with infections found: {infected_files} infected files.")
+            logger.error(f"Scan completed with infections found: {infected_files} infected files.")
             apiObj.status = jobStates.IDLE
             apiObj.activityMessage = f"Scan complete: {infected_files} infected files found"
             return False
@@ -1040,6 +1046,10 @@ def scan_device(selection: Selection):
 @app.post("/scan_folder")
 def scan_folder(req: scanRequest):
 
+    if DRIVE_PATH is None:
+        logger.error("DRIVE_PATH is not set. Cannot scan folder.")
+        return {"status": "error", "message": "DRIVE_PATH is not set"}
+
     folder_path = os.path.join(DRIVE_PATH, req.folder)
 
     logger.info(f"Received request to scan folder: {folder_path}")
@@ -1052,6 +1062,11 @@ def scan_folder(req: scanRequest):
 # modify copy_device to create job and monitor
 @app.post("/copy_device")
 def copy_device(req: CopyRequest):
+
+    if DRIVE_PATH is None:
+        logger.error("DRIVE_PATH is not set. Cannot copy folder.")
+        return {"status": "error", "message": "DRIVE_PATH is not set"}
+    
     logger.info(f"Received request to copy from {req.src_folder} to {req.dst_folder}")
     src_path = os.path.join(DRIVE_PATH, req.src_folder)
     dst_path = os.path.join(DRIVE_PATH, req.dst_folder)
@@ -1113,6 +1128,12 @@ def get_status():
 
 @app.get("/folders")
 def get_folders():
+
+
+    if DRIVE_PATH is None:
+        logger.error("DRIVE_PATH is not set. Cannot get folders.")
+        return {"status": "error", "message": "DRIVE_PATH is not set"}
+
     folders = []
     logger.info(f"Looking for folders in {DRIVE_PATH}")
     for item in os.listdir(DRIVE_PATH):
