@@ -72,87 +72,8 @@ previousStatus = None
 global previousMessage
 previousMessage = None
 
-def av_scan_parition(device_node):
 
-    mountPoint = get_mountpoint(device_node)
-    if not mountPoint:
-        logger.error("Device is not mounted; cannot scan with ClamAV. Please mount the device and try again.")
-        apiObj.activityMessage = "Scan failed: device not mounted"
-        return False
-    
-    if apiObj.status != jobStates.IDLE:
-        logger.error("Another job is currently running. Please wait until it finishes.")
-        apiObj.activityMessage = f"Scan failed: another job {apiObj.status.value} is running"
-        return False
-    else:
-        apiObj.status = jobStates.SCANNING
-        apiObj.activityMessage = f"Scanning {device_node} for viruses..."
-
-    cmd = ['clamscan', f'-r', mountPoint]
-    if os.geteuid() != 0:
-        cmd = ['sudo'] + cmd
-    logger.info("Running: %s", ' '.join(cmd))
-    try:
-        apiObj.process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-            universal_newlines=True,
-        )
-        import re
-        last_pass = None
-        # Read lines as they arrive and print them; try to extract pass number
-        infected_files = 0
-        for raw in apiObj.process.stdout:
-            line = raw.rstrip('\r\n')
-            # Print raw nwipe output so user sees messages
-            if "infected files" in line.lower():
-                infected_files = int(line.split(":")[-1].strip())
-                if infected_files > 0:
-                    logger.error(f"Infected files found: {infected_files}")
-                else:
-                    logger.info("No infected files found.")
-
-            low = line.lower()
-
-        if apiObj.process == None:
-            logger.error("Scan Termintated")
-            apiObj.status = jobStates.IDLE
-            apiObj.activityMessage = "Scan Terminated"
-            return False
-
-        ret = apiObj.process.wait()
-
-        if ret == 0:
-            logger.info("Scan completed successfully with no infections found.")
-            apiObj.status = jobStates.IDLE
-            apiObj.activityMessage = "Scan complete: no infections found"
-            return True
-        if ret == 1:
-            logger.error(f"Scan completed with infections found: {infected_files} infected files.")
-            apiObj.status = jobStates.IDLE
-            apiObj.activityMessage = f"Scan complete: {infected_files} infected files found"
-            return False
-        elif ret == -9:
-            apiObj.activityMessage = "Scan cancelled"
-            logger.info("Scan was cancelled by the user.")
-            apiObj.status = jobStates.IDLE
-            return False
-        else:
-            logger.error("Scan completed with non-zero exit code: %d", ret)
-            apiObj.status = jobStates.IDLE
-            apiObj.activityMessage = "Scan completed with issues"
-            return False
-
-    except Exception as e:
-        logger.error("Scan Termintated: %s", e)
-        apiObj.status = jobStates.IDLE
-        apiObj.activityMessage = "Scan Terminated"
-        return False
-
-def av_scan_folder(folder_path):
+def av_scan(folder_path):
 
     
     if apiObj.status != jobStates.IDLE:
@@ -1038,7 +959,13 @@ def scan_device(selection: Selection):
 
     logger.info(f"Received request to scan device: {device.node}")
 
-    if not av_scan_parition(device.node):
+    mountPoint = get_mountpoint(device.node)
+    if not mountPoint:
+        logger.error("Device is not mounted; cannot scan with ClamAV. Please mount the device and try again.")
+        apiObj.activityMessage = "Scan failed: device not mounted"
+        return {"status": "error", "message": "Device not mounted; cannot scan"}
+
+    if not av_scan(mountPoint):
         return {"status": "scan failed or infections found"}
     logger.info(f"Scan completed successfully for device: {device.node}")
     return {"status": "scan complete, no infections found"}
@@ -1054,7 +981,7 @@ def scan_folder(req: scanRequest):
 
     logger.info(f"Received request to scan folder: {folder_path}")
 
-    if not av_scan_folder(folder_path):
+    if not av_scan(folder_path):
         return {"status": "scan failed or infections found"}
     logger.info(f"Scan completed successfully for folder: {folder_path}")
     return {"status": "scan complete, no infections found"}
