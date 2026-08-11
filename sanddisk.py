@@ -131,7 +131,7 @@ def av_scan_parition(device_node):
             apiObj.activityMessage = "Scan complete: no infections found"
             return True
         if ret == 1:
-            logger.info(f"Scan completed with infections found: {infected_files} infected files.")
+            logger.error(f"Scan completed with infections found: {infected_files} infected files.")
             apiObj.status = jobStates.IDLE
             apiObj.activityMessage = f"Scan complete: {infected_files} infected files found"
             return False
