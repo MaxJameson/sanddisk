@@ -86,3 +86,34 @@ APPLICATION STARTED
 SystemExit: 1
 
 2026-06-26 12:21:21,171 - ERROR - Application startup failed. Exiting.
+2026-08-11 09:56:04,286 - INFO - 
+=====================================
+
+APPLICATION STARTED
+
+=====================================
+2026-08-11 09:56:04,291 - INFO - Started server process [12565]
+2026-08-11 09:56:04,291 - INFO - Waiting for application startup.
+2026-08-11 09:56:04,292 - INFO - Application startup complete.
+2026-08-11 09:56:04,294 - INFO - Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+2026-08-11 09:56:18,249 - INFO - Status changed: IDLE, message: IDLE
+2026-08-11 09:56:29,586 - INFO - Fetching drives with partitions
+2026-08-11 09:56:29,623 - INFO - Found drives with partitions: []
+2026-08-11 09:56:29,630 - ERROR - DRIVE_PATH is not set. Cannot get folders.
+2026-08-11 09:56:52,494 - INFO - Fetching drives with partitions
+2026-08-11 09:56:52,531 - INFO - Found drives with partitions: []
+2026-08-11 09:56:52,537 - ERROR - DRIVE_PATH is not set. Cannot get folders.
+2026-08-11 09:56:53,392 - INFO - Fetching drives with partitions
+2026-08-11 09:56:53,407 - INFO - Found drives with partitions: []
+2026-08-11 09:56:53,411 - ERROR - DRIVE_PATH is not set. Cannot get folders.
+2026-08-11 09:57:15,971 - INFO - Fetching drives with partitions
+2026-08-11 09:57:15,988 - INFO - Found drives with partitions: []
+2026-08-11 09:57:16,000 - ERROR - DRIVE_PATH is not set. Cannot get folders.
+2026-08-11 09:59:49,152 - INFO - Fetching drives with partitions
+2026-08-11 09:59:49,173 - INFO - Found drives with partitions: []
+2026-08-11 09:59:52,767 - INFO - Fetching USB drives
+2026-08-11 09:59:54,556 - INFO - Fetching drives with partitions
+2026-08-11 09:59:54,595 - INFO - Found drives with partitions: []
+2026-08-11 10:02:02,675 - INFO - Fetching drives with partitions
+2026-08-11 10:02:02,708 - INFO - Found drives with partitions: []
+2026-08-11 10:02:02,715 - ERROR - DRIVE_PATH is not set. Cannot get folders.
