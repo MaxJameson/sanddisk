@@ -1,0 +1,27 @@
+2026-08-11 13:12:15,786 - INFO - 
+=====================================
+
+APPLICATION STARTED
+
+=====================================
+2026-08-11 13:12:15,788 - INFO - Started server process [45849]
+2026-08-11 13:12:15,789 - INFO - Waiting for application startup.
+2026-08-11 13:12:15,789 - INFO - Application startup complete.
+2026-08-11 13:12:15,795 - INFO - Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+2026-08-11 13:12:28,315 - INFO - Status changed: IDLE, message: IDLE
+2026-08-11 13:12:31,445 - INFO - Fetching drives with partitions
+2026-08-11 13:12:31,468 - INFO - Found drives with partitions: [{'node': '/dev/sda', 'vendor': 'KIOXIA', 'model': 'TransMemory', 'serial': '0022CFF6BD8EC5914322E068', 'size': 15500574720, 'size_human': '14.44 GB', 'partitions': [{'node': '/dev/sda1', 'number': '1', 'fstype': 'vfat', 'label': 'TEST_VOL', 'size': 999275520, 'size_human': '952.98 MB'}]}]
+2026-08-11 13:12:31,475 - ERROR - DRIVE_PATH is not set. Cannot get folders.
+2026-08-11 13:12:40,843 - INFO - Received request to scan device: /dev/sda1
+2026-08-11 13:12:40,844 - INFO - Running: clamscan -r /media/max/TEST_VOL
+2026-08-11 13:12:42,330 - INFO - Status changed: SCANNING, message: Scanning /media/max/TEST_VOL for viruses...
+2026-08-11 13:12:48,539 - INFO - No infected files found.
+2026-08-11 13:12:48,541 - INFO - Scan completed successfully with no infections found.
+2026-08-11 13:12:48,541 - INFO - Scan completed successfully for device: /dev/sda1
+2026-08-11 13:12:50,348 - INFO - Status changed: IDLE, message: Scan complete: no infections found
+2026-08-11 13:13:45,792 - INFO - Received request to scan device: /dev/sda1
+2026-08-11 13:13:45,793 - INFO - Running: clamscan -r /media/max/TEST_VOL
+2026-08-11 13:13:47,291 - INFO - Status changed: SCANNING, message: Scanning /media/max/TEST_VOL for viruses...
+2026-08-11 13:13:53,492 - ERROR - Infected files found: 1
+2026-08-11 13:13:53,493 - ERROR - Scan completed with infections found: 1 infected files.
+2026-08-11 13:13:55,300 - INFO - Status changed: IDLE, message: Scan complete: 1 infected files found
