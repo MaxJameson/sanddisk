@@ -185,8 +185,11 @@ def av_scan_folder(folder_path):
             # Print raw nwipe output so user sees messages
             if "infected files" in line.lower():
                 infected_files = int(line.split(":")[-1].strip())
-                logger.error(f"Infected files found: {infected_files}")
-
+                if infected_files > 0:
+                    logger.error(f"Infected files found: {infected_files}")
+                else:
+                    logger.info("No infected files found.")
+            
             low = line.lower()
 
         if apiObj.process == None:
@@ -203,7 +206,7 @@ def av_scan_folder(folder_path):
             apiObj.activityMessage = "Scan complete: no infections found"
             return True
         if ret == 1:
-            logger.info(f"Scan completed with infections found: {infected_files} infected files.")
+            logger.error(f"Scan completed with infections found: {infected_files} infected files.")
             apiObj.status = jobStates.IDLE
             apiObj.activityMessage = f"Scan complete: {infected_files} infected files found"
             return False
